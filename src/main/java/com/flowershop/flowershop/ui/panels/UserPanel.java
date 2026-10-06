@@ -58,15 +58,9 @@ public class UserPanel extends JPanel {
         txtSearch.addActionListener(e -> loadData());
         JButton btnSearch = new JButton("Search");
         btnSearch.addActionListener(e -> loadData());
-        JButton btnRefresh = new JButton("Refresh");
-        btnRefresh.addActionListener(e -> {
-            txtSearch.setText("");
-            loadData();
-        });
         JPanel searchButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         searchButtons.setOpaque(false);
         searchButtons.add(btnSearch);
-        searchButtons.add(btnRefresh);
         searchPanel.add(new JLabel("Search: "), BorderLayout.WEST);
         searchPanel.add(txtSearch, BorderLayout.CENTER);
         searchPanel.add(searchButtons, BorderLayout.EAST);

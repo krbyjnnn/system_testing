@@ -1,6 +1,7 @@
 package com.flowershop.flowershop.ui.panels;
 
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.ProductionService;
 
 import javax.swing.*;
 import java.awt.*;
@@ -16,11 +17,16 @@ public class InventoryPanel extends JPanel {
             ProductInventoryRepository productInventoryRepository,
             ComponentRepository componentRepository,
             ComponentInventoryRepository componentInventoryRepository,
-            CategoryRepository categoryRepository
+            CategoryRepository categoryRepository,
+            SupplierRepository supplierRepository,
+            RecipeRepository recipeRepository,
+            ProductionService productionService
     ) {
-        productPanel = new ProductPanel(productRepository, productInventoryRepository);
-        componentPanel = new ComponentPanel(componentRepository, componentInventoryRepository);
-        categoryPanel = new CategoryPanel(categoryRepository, productRepository, componentRepository);
+        productPanel = new ProductPanel(productRepository, productInventoryRepository, categoryRepository,
+                supplierRepository, componentRepository, componentInventoryRepository, recipeRepository,
+                productionService);
+        componentPanel = new ComponentPanel(componentRepository, componentInventoryRepository, categoryRepository, supplierRepository);
+        categoryPanel = new CategoryPanel(categoryRepository);
 
         initUI();
     }
@@ -36,6 +42,7 @@ public class InventoryPanel extends JPanel {
         add(lblTitle, BorderLayout.NORTH);
 
         // Tabs: Products, Components, Category (submodule)
+        // Each tab has its own add/edit form at the top, so there are no pop-up windows.
         JTabbedPane tabs = new JTabbedPane();
         tabs.setFont(new Font("Segoe UI", Font.BOLD, 13));
         tabs.addTab("Products", productPanel);
@@ -55,5 +62,12 @@ public class InventoryPanel extends JPanel {
         });
 
         add(tabs, BorderLayout.CENTER);
+    }
+
+    // Reloads every tab (called automatically when this screen is opened)
+    public void refresh() {
+        productPanel.loadData();
+        componentPanel.loadData();
+        categoryPanel.loadData();
     }
 }

@@ -2,6 +2,7 @@ package com.flowershop.flowershop.ui;
 
 import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.ProductionService;
 import com.flowershop.flowershop.service.SaleService;
 import com.flowershop.flowershop.ui.panels.*;
 
@@ -66,7 +67,10 @@ public class MainFrame extends JFrame {
                         SpringContext.getBean(ProductInventoryRepository.class),
                         SpringContext.getBean(ComponentRepository.class),
                         SpringContext.getBean(ComponentInventoryRepository.class),
-                        SpringContext.getBean(CategoryRepository.class)
+                        SpringContext.getBean(CategoryRepository.class),
+                        SpringContext.getBean(SupplierRepository.class),
+                        SpringContext.getBean(RecipeRepository.class),
+                        SpringContext.getBean(ProductionService.class)
                 ),
                 "INVENTORY"
         );
@@ -221,6 +225,7 @@ public class MainFrame extends JFrame {
 
         button.addActionListener(e -> {
             cardLayout.show(contentArea, cardName);
+            refreshScreen();
 
             for (JButton btn : navButtons) {
                 resetButton(btn);
@@ -230,6 +235,30 @@ public class MainFrame extends JFrame {
 
         navButtons.add(button);
         return button;
+    }
+
+    // Reloads the screen that was just opened, so its data is always up to date
+    private void refreshScreen() {
+        for (Component c : contentArea.getComponents()) {
+            if (!c.isVisible()) {
+                continue;
+            }
+            if (c instanceof DashboardPanel) {
+                ((DashboardPanel) c).refreshDashboardData();
+            } else if (c instanceof POSPanel) {
+                ((POSPanel) c).loadProducts();
+            } else if (c instanceof InventoryPanel) {
+                ((InventoryPanel) c).refresh();
+            } else if (c instanceof SupplierPanel) {
+                ((SupplierPanel) c).loadData();
+            } else if (c instanceof DisputePanel) {
+                ((DisputePanel) c).loadData();
+            } else if (c instanceof ReturnsPanel) {
+                ((ReturnsPanel) c).loadData();
+            } else if (c instanceof UserPanel) {
+                ((UserPanel) c).loadData();
+            }
+        }
     }
 
     private void highlightButton(JButton button) {
@@ -243,4 +272,5 @@ public class MainFrame extends JFrame {
         button.setForeground(Color.BLACK);
         button.setFont(new Font("Segoe UI", Font.PLAIN, 14));
     }
+
 }

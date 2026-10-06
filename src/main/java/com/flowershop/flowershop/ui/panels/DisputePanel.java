@@ -68,19 +68,12 @@ public class DisputePanel extends JPanel {
         cmbFilter.addActionListener(e -> loadData());
         JButton btnSearch = new JButton("Search");
         btnSearch.addActionListener(e -> loadData());
-        JButton btnRefresh = new JButton("Refresh");
-        btnRefresh.addActionListener(e -> {
-            txtSearch.setText("");
-            cmbFilter.setSelectedIndex(0);
-            loadData();
-        });
 
         JPanel filterPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         filterPanel.setOpaque(false);
         filterPanel.add(new JLabel("Status:"));
         filterPanel.add(cmbFilter);
         filterPanel.add(btnSearch);
-        filterPanel.add(btnRefresh);
 
         searchPanel.add(new JLabel("Search: "), BorderLayout.WEST);
         searchPanel.add(txtSearch, BorderLayout.CENTER);

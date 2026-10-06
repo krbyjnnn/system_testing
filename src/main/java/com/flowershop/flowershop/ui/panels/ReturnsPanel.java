@@ -61,10 +61,7 @@ public class ReturnsPanel extends JPanel {
         headerPanel.setOpaque(false);
         JLabel lblTitle = new JLabel("Returns");
         lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
-        JButton btnRefresh = new JButton("Refresh");
-        btnRefresh.addActionListener(e -> loadData());
         headerPanel.add(lblTitle, BorderLayout.WEST);
-        headerPanel.add(btnRefresh, BorderLayout.EAST);
         add(headerPanel, BorderLayout.NORTH);
 
         // Two cards: valid disputes on top, returns below

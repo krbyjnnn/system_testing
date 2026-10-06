@@ -59,15 +59,9 @@ public class SupplierPanel extends JPanel {
         txtSearch.addActionListener(e -> loadData());
         JButton btnSearch = new JButton("Search");
         btnSearch.addActionListener(e -> loadData());
-        JButton btnRefresh = new JButton("Refresh");
-        btnRefresh.addActionListener(e -> {
-            txtSearch.setText("");
-            loadData();
-        });
         JPanel searchButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         searchButtons.setOpaque(false);
         searchButtons.add(btnSearch);
-        searchButtons.add(btnRefresh);
         searchPanel.add(new JLabel("Search: "), BorderLayout.WEST);
         searchPanel.add(txtSearch, BorderLayout.CENTER);
         searchPanel.add(searchButtons, BorderLayout.EAST);
@@ -118,6 +112,10 @@ public class SupplierPanel extends JPanel {
         // 1. Find which components each supplier provides (from the component batches)
         Map<Long, String> components = new HashMap<>();
         for (ComponentInventory batch : componentInventoryRepository.findAll()) {
+            // Batches with no supplier (non-perishable items) don't belong to any supplier
+            if (batch.getSupplier() == null) {
+                continue;
+            }
             Long supplierId = batch.getSupplier().getSupplierId();
             String name = batch.getComponent().getName();
             String current = components.containsKey(supplierId) ? components.get(supplierId) : "";

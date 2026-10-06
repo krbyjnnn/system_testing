@@ -14,7 +14,7 @@ public class ComponentInventory {
     private Long cbatchId;
 
     @ManyToOne
-    @JoinColumn(name = "supplier_id", nullable = false)
+    @JoinColumn(name = "supplier_id")
     private Supplier supplier;
 
     @ManyToOne

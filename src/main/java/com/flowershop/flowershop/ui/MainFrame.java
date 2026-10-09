@@ -30,9 +30,8 @@ public class MainFrame extends JFrame {
 
     private void initUI() {
         setTitle("Junaie's Flower Shop Management System");
-        setSize(1100, 700);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setLocationRelativeTo(null);
+        setExtendedState(JFrame.MAXIMIZED_BOTH);
         setLayout(new BorderLayout());
 
         // 1. Sidebar Menu (West)

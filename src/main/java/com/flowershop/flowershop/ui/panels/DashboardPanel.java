@@ -1,15 +1,21 @@
 package com.flowershop.flowershop.ui.panels;
 
+import com.flowershop.flowershop.model.Order;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+
 import com.flowershop.flowershop.repository.OrderRepository;
 import com.flowershop.flowershop.repository.ProductInventoryRepository;
 import com.flowershop.flowershop.repository.ProductRepository;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
+
 import java.awt.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 
 public class DashboardPanel extends JPanel {
 
@@ -22,8 +28,9 @@ public class DashboardPanel extends JPanel {
     private JLabel lblMonthlySales;
     private JLabel lblTotalProducts;
 
-    private JTable lowStockTable;
+    private JTable transactionTable;
     private DefaultTableModel tableModel;
+    private int currentPage = 0;
 
     public DashboardPanel(
             ProductRepository productRepository,
@@ -49,12 +56,7 @@ public class DashboardPanel extends JPanel {
         JLabel lblTitle = new JLabel("Executive Dashboard & Overview");
         lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
 
-        JButton btnRefresh = new JButton("Refresh Data");
-        btnRefresh.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        btnRefresh.addActionListener(e -> refreshDashboardData());
-
         headerPanel.add(lblTitle, BorderLayout.WEST);
-        headerPanel.add(btnRefresh, BorderLayout.EAST);
         add(headerPanel, BorderLayout.NORTH);
 
         // Center Area
@@ -78,18 +80,18 @@ public class DashboardPanel extends JPanel {
         centerPanel.add(cardsGrid, BorderLayout.NORTH);
 
         // 2. Low Stock Table Section
-        JPanel lowStockPanel = new JPanel(new BorderLayout(0, 10));
-        lowStockPanel.setBackground(Color.WHITE);
-        lowStockPanel.setBorder(BorderFactory.createCompoundBorder(
+        JPanel transactionPanel = new JPanel(new BorderLayout(0, 10));
+        transactionPanel.setBackground(Color.WHITE);
+        transactionPanel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
                 BorderFactory.createEmptyBorder(15, 15, 15, 15)
         ));
 
-        JLabel lblLowStockTitle = new JLabel("Low Stock Alert (Quantity ≤ 5)");
-        lblLowStockTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        lblLowStockTitle.setForeground(new Color(220, 53, 69));
+        JLabel lblTransactionTitle = new JLabel("Transaction History");
+        lblTransactionTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        lblTransactionTitle.setForeground(new Color(40, 40, 40));
 
-        String[] columns = {"ID", "Product Name", "Category", "Quantity"};
+        String[] columns = {"Transaction No.", "Date & Time", "Type", "Cashier", "Total", "Status"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -97,18 +99,18 @@ public class DashboardPanel extends JPanel {
             }
         };
 
-        lowStockTable = new JTable(tableModel);
-        lowStockTable.setRowHeight(28);
-        lowStockTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-        lowStockTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        transactionTable = new JTable(tableModel);
+        transactionTable.setRowHeight(28);
+        transactionTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
+        transactionTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
 
-        JScrollPane scrollPane = new JScrollPane(lowStockTable);
+        JScrollPane scrollPane = new JScrollPane(transactionTable);
         scrollPane.setBorder(BorderFactory.createEmptyBorder());
 
-        lowStockPanel.add(lblLowStockTitle, BorderLayout.NORTH);
-        lowStockPanel.add(scrollPane, BorderLayout.CENTER);
+        transactionPanel.add(lblTransactionTitle, BorderLayout.NORTH);
+        transactionPanel.add(scrollPane, BorderLayout.CENTER);
 
-        centerPanel.add(lowStockPanel, BorderLayout.CENTER);
+        centerPanel.add(transactionPanel, BorderLayout.CENTER);
         add(centerPanel, BorderLayout.CENTER);
     }
 
@@ -158,18 +160,26 @@ public class DashboardPanel extends JPanel {
         long count = productRepository != null ? productRepository.countActiveProducts() : 0;
         lblTotalProducts.setText(String.valueOf(count));
 
-        // 5. Populate Low Stock Alerts
-        tableModel.setRowCount(0);
-        if (productInventoryRepository != null) {
-            productInventoryRepository.findLowStockItems(5).forEach(item -> {
+        currentPage = 0;
+        loadTransaction();
+        }
+
+        private void loadTransaction() {
+            // Populate the transaction table with the latest 15 orders
+            tableModel.setRowCount(0);
+            if (orderRepository != null) {
+            Page<Order> ordersPage = orderRepository.findAllByOrderByOrderDateDesc(PageRequest.of(currentPage, 15));
+            DateTimeFormatter dateFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+            for (Order order : ordersPage.getContent()) {
                 tableModel.addRow(new Object[]{
-                    item.getPbatchId(),
-                    item.getProduct() != null ? item.getProduct().getProductName() : "N/A",
-                    (item.getProduct() != null && item.getProduct().getCategory() != null)
-                        ? item.getProduct().getCategory().getName() : "N/A",
-                    item.getQuantityOnHand()
+                    order.getTransactionNumber(),
+                    order.getOrderDate().format(dateFormat),
+                    order.getOrderType(),
+                    order.getUser() != null ? order.getUser().getFullName() : "N/A",
+                    "₱" + String.format("%.2f", order.getTotalAmount()),
+                    order.getOrderStatus()
                 });
-            });
+            }
         }
     }
 }

@@ -26,6 +26,9 @@ public class Supplier {
     @Column(name = "address", length = 255)
     private String address;
 
+    @Column(name = "status", nullable = false)
+    private String status = "ACTIVE";
+
     public Supplier() {
     }
 
@@ -83,5 +86,13 @@ public class Supplier {
 
     public void setAddress(String address) {
         this.address = address;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 }

@@ -23,6 +23,9 @@ public class User {
     @Column(name = "role", nullable = false, length = 255)
     private String role;
 
+    @Column(name = "status", nullable = false, length = 50)
+    private String status = "ACTIVE";
+
     public User() {
 
     }
@@ -71,5 +74,13 @@ public class User {
 
     public void setRole(String role) { 
         this.role = role; 
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(String status) {
+        this.status = status;
     }
 }

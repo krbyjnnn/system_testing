@@ -33,10 +33,23 @@ public class ReturnsPanel extends JPanel {
     private JComboBox<String> cmbFilter;
     private JLabel lblSummary;
 
-    // Valid disputes shown in the top table (same order as the rows)
+    private JLabel lblFormTitle;
+    private JLabel lblHint;
+    private JComboBox<String> cmbItem;
+    private JSpinner spnQty;
+    private JTextField txtRefund;
+    private JButton btnStart;
+    private JButton btnClear;
+
+    // Same order as the table rows, so a row index maps directly to an object
     private List<Dispute> waitingDisputes = new ArrayList<>();
-    // Returns shown in the bottom table (same order as the rows)
     private List<Returns> shownReturns = new ArrayList<>();
+
+    private Dispute selectedDispute = null;
+
+    // Same order as the item combo box. remaining = bought quantity minus what was already returned
+    private List<OrderItem> formItems = new ArrayList<>();
+    private List<Integer> formRemaining = new ArrayList<>();
 
     public ReturnsPanel(
             ReturnsRepository returnsRepository,
@@ -56,7 +69,6 @@ public class ReturnsPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
         setBackground(new Color(245, 247, 250));
 
-        // Top Header
         JPanel headerPanel = new JPanel(new BorderLayout());
         headerPanel.setOpaque(false);
         JLabel lblTitle = new JLabel("Returns");
@@ -64,11 +76,9 @@ public class ReturnsPanel extends JPanel {
         headerPanel.add(lblTitle, BorderLayout.WEST);
         add(headerPanel, BorderLayout.NORTH);
 
-        // Two cards: valid disputes on top, returns below
         JPanel centerPanel = new JPanel(new GridLayout(2, 1, 0, 15));
         centerPanel.setOpaque(false);
 
-        // ---- Card 1: valid disputes waiting for a return ----
         JPanel disputeCard = whiteCard();
 
         JLabel lblDisputes = new JLabel("Valid Disputes (no return yet)");
@@ -77,19 +87,24 @@ public class ReturnsPanel extends JPanel {
         disputeModel = readOnlyModel(new String[]{"ID", "Customer", "Order", "Complaint"});
         disputeTable = new JTable(disputeModel);
         styleTable(disputeTable);
+        disputeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         disputeTable.getColumnModel().getColumn(3).setPreferredWidth(350);
 
-        JButton btnStart = new JButton("Start Return");
-        btnStart.addActionListener(e -> startReturn());
-        JPanel startPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
-        startPanel.setOpaque(false);
-        startPanel.add(btnStart);
+        disputeTable.getSelectionModel().addListSelectionListener(e -> {
+            if (e.getValueIsAdjusting()) {
+                return;
+            }
+            int row = disputeTable.getSelectedRow();
+            if (row < 0 || row >= waitingDisputes.size()) {
+                return;
+            }
+            fillForm(waitingDisputes.get(row));
+        });
 
         disputeCard.add(lblDisputes, BorderLayout.NORTH);
         disputeCard.add(new JScrollPane(disputeTable), BorderLayout.CENTER);
-        disputeCard.add(startPanel, BorderLayout.SOUTH);
+        disputeCard.add(buildFormPanel(), BorderLayout.EAST);
 
-        // ---- Card 2: returns ----
         JPanel returnsCard = whiteCard();
 
         JPanel returnsTop = new JPanel(new BorderLayout());
@@ -136,6 +151,187 @@ public class ReturnsPanel extends JPanel {
         add(centerPanel, BorderLayout.CENTER);
     }
 
+    private JPanel buildFormPanel() {
+        lblFormTitle = new JLabel("Start Return");
+        lblFormTitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
+
+        lblHint = new JLabel();
+        lblHint.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        lblHint.setForeground(new Color(110, 118, 130));
+
+        cmbItem = new JComboBox<>();
+        spnQty = new JSpinner(new SpinnerNumberModel(1, 1, 999, 1));
+        txtRefund = new JTextField();
+
+        cmbItem.addActionListener(e -> onItemChanged());
+        spnQty.addChangeListener(e -> fillRefund());
+
+        btnStart = new JButton("Start Return");
+        btnStart.addActionListener(e -> startReturn());
+        btnClear = new JButton("Clear");
+        btnClear.addActionListener(e -> clearForm());
+
+        JPanel buttons = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        buttons.setOpaque(false);
+        buttons.add(btnStart);
+        buttons.add(btnClear);
+
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setOpaque(false);
+        panel.setPreferredSize(new Dimension(320, 0));
+        panel.setBorder(BorderFactory.createEmptyBorder(0, 15, 0, 0));
+
+        GridBagConstraints gbc = new GridBagConstraints();
+        gbc.gridx = 0;
+        gbc.weightx = 1;
+        gbc.fill = GridBagConstraints.HORIZONTAL;
+        gbc.anchor = GridBagConstraints.NORTHWEST;
+
+        gbc.gridy = 0;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        panel.add(lblFormTitle, gbc);
+
+        gbc.gridy = 1;
+        gbc.insets = new Insets(4, 0, 12, 0);
+        panel.add(lblHint, gbc);
+
+        gbc.gridy = 2;
+        gbc.insets = new Insets(0, 0, 3, 0);
+        panel.add(formLabel("Item to Return"), gbc);
+        gbc.gridy = 3;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(cmbItem, gbc);
+
+        gbc.gridy = 4;
+        gbc.insets = new Insets(0, 0, 3, 0);
+        panel.add(formLabel("Quantity"), gbc);
+        gbc.gridy = 5;
+        gbc.insets = new Insets(0, 0, 10, 0);
+        panel.add(spnQty, gbc);
+
+        gbc.gridy = 6;
+        gbc.insets = new Insets(0, 0, 3, 0);
+        panel.add(formLabel("Refund Amount"), gbc);
+        gbc.gridy = 7;
+        gbc.insets = new Insets(0, 0, 12, 0);
+        panel.add(txtRefund, gbc);
+
+        gbc.gridy = 8;
+        gbc.insets = new Insets(0, 0, 0, 0);
+        panel.add(buttons, gbc);
+
+        gbc.gridy = 9;
+        gbc.weighty = 1;
+        gbc.fill = GridBagConstraints.BOTH;
+        JPanel filler = new JPanel();
+        filler.setOpaque(false);
+        panel.add(filler, gbc);
+
+        setFormEnabled(false);
+        return panel;
+    }
+
+    private JLabel formLabel(String text) {
+        JLabel l = new JLabel(text);
+        l.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        return l;
+    }
+
+    private void setHint(String text) {
+        lblHint.setText("<html><div style='width:270px'>" + text + "</div></html>");
+    }
+
+    // Everything stays grayed out until a dispute is selected
+    private void setFormEnabled(boolean enabled) {
+        cmbItem.setEnabled(enabled);
+        spnQty.setEnabled(enabled);
+        ((JSpinner.DefaultEditor) spnQty.getEditor()).getTextField().setEnabled(enabled);
+        txtRefund.setEnabled(enabled);
+        btnStart.setEnabled(enabled);
+        btnClear.setEnabled(enabled);
+    }
+
+    // Quantity can't go above what is still left to return for the chosen item
+    private void onItemChanged() {
+        int index = cmbItem.getSelectedIndex();
+        if (index < 0 || index >= formRemaining.size()) {
+            return;
+        }
+        SpinnerNumberModel model = (SpinnerNumberModel) spnQty.getModel();
+        model.setMaximum(formRemaining.get(index));
+        model.setValue(1);
+        fillRefund();
+    }
+
+    private void fillForm(Dispute dispute) {
+        selectedDispute = dispute;
+        formItems = new ArrayList<>();
+        formRemaining = new ArrayList<>();
+        cmbItem.removeAllItems();
+        spnQty.setValue(1);
+        txtRefund.setText("");
+
+        if (dispute.getOrder() == null) {
+            setHint(dispute.getCustomerName() + " has no linked order. Link one first (Disputes > Edit Selected).");
+            setFormEnabled(false);
+            return;
+        }
+
+        Long orderId = dispute.getOrder().getOrderId();
+        List<OrderItem> items = orderItemRepository.findByOrderOrderId(orderId);
+        List<Returns> earlier = returnsRepository.findByOrderOrderId(orderId);
+
+        // Items that are fully returned are left out. "Failed to Return" doesn't count, so it can be tried again
+        List<OrderItem> available = new ArrayList<>();
+        List<Integer> remaining = new ArrayList<>();
+        for (OrderItem item : items) {
+            int alreadyReturned = 0;
+            for (Returns r : earlier) {
+                if (r.getOrderItem() != null
+                        && r.getOrderItem().getOrderItemId().equals(item.getOrderItemId())
+                        && !FAILED.equals(r.getStatus())) {
+                    alreadyReturned += r.getQuantityReturned();
+                }
+            }
+            int left = item.getQuantity() - alreadyReturned;
+            if (left > 0) {
+                available.add(item);
+                remaining.add(left);
+            }
+        }
+
+        if (available.isEmpty()) {
+            setHint(orderLabel(dispute.getOrder()) + " has no items left to return.");
+            setFormEnabled(false);
+            return;
+        }
+
+        // Must be set before addItem, because adding the first item triggers onItemChanged
+        formItems = available;
+        formRemaining = remaining;
+        for (int i = 0; i < available.size(); i++) {
+            OrderItem item = available.get(i);
+            cmbItem.addItem(item.getProduct().getProductName()
+                    + " (x" + remaining.get(i) + " left, " + peso(item.getUnitPrice()) + ")");
+        }
+
+        setHint("Customer: " + dispute.getCustomerName() + "<br>Order: " + orderLabel(dispute.getOrder()));
+        setFormEnabled(true);
+        onItemChanged();
+    }
+
+    private void clearForm() {
+        selectedDispute = null;
+        formItems = new ArrayList<>();
+        formRemaining = new ArrayList<>();
+        disputeTable.clearSelection();
+        cmbItem.removeAllItems();
+        spnQty.setValue(1);
+        txtRefund.setText("");
+        setHint("Click a dispute on the left to start returning.");
+        setFormEnabled(false);
+    }
+
     private JPanel whiteCard() {
         JPanel card = new JPanel(new BorderLayout(0, 10));
         card.setBackground(Color.WHITE);
@@ -164,7 +360,6 @@ public class ReturnsPanel extends JPanel {
     public void loadData() {
         List<Returns> allReturns = returnsRepository.findAll();
 
-        // Disputes that already have a return
         List<Long> returnedDisputeIds = new ArrayList<>();
         for (Returns r : allReturns) {
             if (r.getDispute() != null) {
@@ -172,7 +367,7 @@ public class ReturnsPanel extends JPanel {
             }
         }
 
-        // 1. Valid disputes that do not have a return yet
+        // A dispute that already has a return is not listed again
         waitingDisputes.clear();
         disputeModel.setRowCount(0);
         for (Dispute d : disputeRepository.findByStatus("Valid")) {
@@ -188,7 +383,7 @@ public class ReturnsPanel extends JPanel {
             });
         }
 
-        // 2. All returns (newest first), filtered by status
+        // Newest first
         String filter = (String) cmbFilter.getSelectedItem();
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a");
         shownReturns.clear();
@@ -226,67 +421,23 @@ public class ReturnsPanel extends JPanel {
 
         lblSummary.setText(shownReturns.size() + " returns  |  "
                 + toReturn + " to return  |  " + returned + " returned  |  " + failed + " failed");
+
+        // Rows were rebuilt, so any selection is stale
+        clearForm();
     }
 
-    // Turn the selected valid dispute into a return with status "To Return"
     private void startReturn() {
-        int row = disputeTable.getSelectedRow();
-        if (row < 0) {
+        if (selectedDispute == null || formItems.isEmpty() || cmbItem.getSelectedIndex() < 0) {
             JOptionPane.showMessageDialog(this, "Select a valid dispute first.", "Warning", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
-        Dispute dispute = waitingDisputes.get(row);
-        if (dispute.getOrder() == null) {
-            JOptionPane.showMessageDialog(this,
-                    "This dispute has no related order. Link an order first (Disputes > Edit Selected).",
-                    "Warning", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
-        List<OrderItem> items = orderItemRepository.findByOrderOrderId(dispute.getOrder().getOrderId());
-        if (items.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "That order has no items.", "Warning", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-
-        // Form: item, quantity, refund amount
-        JComboBox<String> cmbItem = new JComboBox<>();
-        for (OrderItem item : items) {
-            cmbItem.addItem(item.getProduct().getProductName()
-                    + " (x" + item.getQuantity() + ", " + peso(item.getUnitPrice()) + ")");
-        }
-        JSpinner spnQty = new JSpinner(new SpinnerNumberModel(1, 1, 999, 1));
-        JTextField txtRefund = new JTextField();
-
-        cmbItem.addActionListener(e -> fillRefund(items, cmbItem, spnQty, txtRefund));
-        spnQty.addChangeListener(e -> fillRefund(items, cmbItem, spnQty, txtRefund));
-        fillRefund(items, cmbItem, spnQty, txtRefund);
-
-        JPanel form = new JPanel(new GridLayout(0, 2, 8, 8));
-        form.add(new JLabel("Customer:"));
-        form.add(new JLabel(dispute.getCustomerName()));
-        form.add(new JLabel("Order:"));
-        form.add(new JLabel(orderLabel(dispute.getOrder())));
-        form.add(new JLabel("Item to return:"));
-        form.add(cmbItem);
-        form.add(new JLabel("Quantity:"));
-        form.add(spnQty);
-        form.add(new JLabel("Refund Amount:"));
-        form.add(txtRefund);
-
-        int result = JOptionPane.showConfirmDialog(this, form, "Start Return",
-                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
-        if (result != JOptionPane.OK_OPTION) {
-            return;
-        }
-
-        // Check the inputs
-        OrderItem item = items.get(cmbItem.getSelectedIndex());
+        int index = cmbItem.getSelectedIndex();
+        OrderItem item = formItems.get(index);
         int qty = (Integer) spnQty.getValue();
-        if (qty > item.getQuantity()) {
+        if (qty > formRemaining.get(index)) {
             JOptionPane.showMessageDialog(this,
-                    "Quantity is more than the " + item.getQuantity() + " bought.",
+                    "Only " + formRemaining.get(index) + " left to return for this item.",
                     "Warning", JOptionPane.WARNING_MESSAGE);
             return;
         }
@@ -304,13 +455,13 @@ public class ReturnsPanel extends JPanel {
         }
 
         // The reason column holds 255 characters, the complaint can be longer
-        String reason = dispute.getComplaint();
+        String reason = selectedDispute.getComplaint();
         if (reason.length() > 255) {
             reason = reason.substring(0, 255);
         }
 
-        Returns newReturn = new Returns(dispute.getOrder(), item, reason, qty, refund, TO_RETURN);
-        newReturn.setDispute(dispute);
+        Returns newReturn = new Returns(selectedDispute.getOrder(), item, reason, qty, refund, TO_RETURN);
+        newReturn.setDispute(selectedDispute);
 
         try {
             returnsRepository.save(newReturn);
@@ -320,18 +471,17 @@ public class ReturnsPanel extends JPanel {
         }
     }
 
-    // Refund amount = unit price x quantity (the user can still edit it)
-    private void fillRefund(List<OrderItem> items, JComboBox<String> cmbItem, JSpinner spnQty, JTextField txtRefund) {
+    // Refund = unit price x quantity, but the user can still edit it
+    private void fillRefund() {
         int index = cmbItem.getSelectedIndex();
-        if (index < 0) {
+        if (index < 0 || index >= formItems.size()) {
             return;
         }
         int qty = (Integer) spnQty.getValue();
-        BigDecimal amount = items.get(index).getUnitPrice().multiply(BigDecimal.valueOf(qty));
+        BigDecimal amount = formItems.get(index).getUnitPrice().multiply(BigDecimal.valueOf(qty));
         txtRefund.setText(amount.toPlainString());
     }
 
-    // Change a "To Return" return to Returned or Failed to Return
     private void changeStatus(String newStatus) {
         int row = returnsTable.getSelectedRow();
         if (row < 0) {
@@ -339,6 +489,7 @@ public class ReturnsPanel extends JPanel {
             return;
         }
 
+        // Only "To Return" can be changed, so Returned and Failed are final
         Returns r = shownReturns.get(row);
         if (!TO_RETURN.equals(r.getStatus())) {
             JOptionPane.showMessageDialog(this,
@@ -363,7 +514,6 @@ public class ReturnsPanel extends JPanel {
         }
     }
 
-    // Shows the transaction number, or "Order #id" if there is none
     private String orderLabel(Order o) {
         if (o.getTransactionNumber() != null) {
             return o.getTransactionNumber();

@@ -13,10 +13,12 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+// Components tab: add components, add stock batches, and see what is in stock.
 public class ComponentPanel extends JPanel {
 
     private final ComponentRepository componentRepository;
@@ -24,14 +26,12 @@ public class ComponentPanel extends JPanel {
     private final CategoryRepository categoryRepository;
     private final SupplierRepository supplierRepository;
 
-    // Table
     private JTextField txtSearch;
     private JTable table;
     private DefaultTableModel tableModel;
     private JLabel lblSummary;
     private List<Component> shownComponents = new ArrayList<>();
 
-    // Component form (top)
     private JLabel lblFormTitle;
     private JTextField txtName;
     private JComboBox<String> cmbCategory;
@@ -43,7 +43,6 @@ public class ComponentPanel extends JPanel {
     private List<Category> categories = new ArrayList<>();
     private Component editing = null; // null = adding a new component
 
-    // Stock form (top)
     private JLabel lblStockTitle;
     private JComboBox<String> cmbSupplier;
     private JSpinner spnQty;
@@ -74,7 +73,6 @@ public class ComponentPanel extends JPanel {
         setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
         setBackground(Color.WHITE);
 
-        // ---------------- Component form ----------------
         lblFormTitle = new JLabel("Add Component");
         lblFormTitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
 
@@ -115,7 +113,6 @@ public class ComponentPanel extends JPanel {
         formCard.add(fields, BorderLayout.CENTER);
         formCard.add(buttonRow, BorderLayout.SOUTH);
 
-        // ---------------- Stock form ----------------
         lblStockTitle = new JLabel("Add Stock (select a component in the table first)");
         lblStockTitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
 
@@ -128,7 +125,7 @@ public class ComponentPanel extends JPanel {
 
         JPanel stockFields = new JPanel(new GridLayout(2, 6, 8, 2));
         stockFields.setOpaque(false);
-        stockFields.add(new JLabel("Supplier (perishables only)"));
+        stockFields.add(new JLabel("Supplier"));
         stockFields.add(new JLabel("Quantity"));
         stockFields.add(new JLabel("Reorder Level"));
         stockFields.add(new JLabel("Unit Cost"));
@@ -161,7 +158,6 @@ public class ComponentPanel extends JPanel {
         top.add(formCard);
         top.add(stockCard);
 
-        // ---------------- Search + table ----------------
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
         searchPanel.setOpaque(false);
         txtSearch = new JTextField();
@@ -175,7 +171,7 @@ public class ComponentPanel extends JPanel {
         searchPanel.add(txtSearch, BorderLayout.CENTER);
         searchPanel.add(searchButtons, BorderLayout.EAST);
 
-        String[] columns = {"Component", "Category", "Unit", "Qty On Hand", "Reorder Level", "Status"};
+        String[] columns = {"Component", "Category", "Unit", "Unit Cost", "Qty On Hand", "Date Received", "Expiry", "Reorder Level", "Status"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -219,20 +215,25 @@ public class ComponentPanel extends JPanel {
         return card;
     }
 
-    // ---------------------------------------------------------------- Data
-
+    // One row per stock batch, so batches with different prices stay separate.
+    // Status (Low Stock / Out of Stock) uses the total of all batches of that component.
     public void loadData() {
         loadDropdowns();
 
-        // 1. Add up every batch per component
-        Map<Long, Integer> quantity = new HashMap<>();
+        Map<Long, List<ComponentInventory>> batchesByComponent = new HashMap<>();
         for (ComponentInventory batch : componentInventoryRepository.findAll()) {
             Long id = batch.getComponent().getComponentId();
-            int qty = quantity.containsKey(id) ? quantity.get(id) : 0;
-            quantity.put(id, qty + batch.getQuantityOnHand());
+            if (!batchesByComponent.containsKey(id)) {
+                batchesByComponent.put(id, new ArrayList<>());
+            }
+            batchesByComponent.get(id).add(batch);
         }
 
-        // 2. Fill the table
+        Comparator<ComponentInventory> usageOrder = Comparator
+                .comparing(ComponentInventory::getExpiryDate, Comparator.nullsLast(Comparator.<LocalDate>naturalOrder()))
+                .thenComparing(ComponentInventory::getDateReceived)
+                .thenComparing(ComponentInventory::getCbatchId);
+
         String keyword = txtSearch.getText().trim().toLowerCase();
         shownComponents.clear();
         tableModel.setRowCount(0);
@@ -245,7 +246,15 @@ public class ComponentPanel extends JPanel {
                 continue;
             }
 
-            int qty = quantity.containsKey(c.getComponentId()) ? quantity.get(c.getComponentId()) : 0;
+            List<ComponentInventory> batches = batchesByComponent.containsKey(c.getComponentId())
+                    ? batchesByComponent.get(c.getComponentId())
+                    : new ArrayList<>();
+            batches.sort(usageOrder);
+
+            int qty = 0;
+            for (ComponentInventory batch : batches) {
+                qty += batch.getQuantityOnHand();
+            }
             int level = c.getReorderLevel();
 
             String status;
@@ -260,15 +269,42 @@ public class ComponentPanel extends JPanel {
             }
             total++;
 
-            shownComponents.add(c);
-            tableModel.addRow(new Object[]{
-                    c.getName(),
-                    c.getCategory() != null ? c.getCategory().getName() : "N/A",
-                    c.getUnitOfMeasure(),
-                    qty,
-                    level,
-                    status
-            });
+            String categoryName = c.getCategory() != null ? c.getCategory().getName() : "N/A";
+            boolean hasRow = false;
+
+            for (ComponentInventory batch : batches) {
+                if (batch.getQuantityOnHand() <= 0) {
+                    continue;
+                }
+                shownComponents.add(c);
+                tableModel.addRow(new Object[]{
+                        c.getName(),
+                        categoryName,
+                        c.getUnitOfMeasure(),
+                        "₱" + String.format("%.2f", batch.getUnitCost()),
+                        batch.getQuantityOnHand(),
+                        batch.getDateReceived().toString(),
+                        batch.getExpiryDate() != null ? batch.getExpiryDate().toString() : "-",
+                        level,
+                        status
+                });
+                hasRow = true;
+            }
+
+            if (!hasRow) {
+                shownComponents.add(c);
+                tableModel.addRow(new Object[]{
+                        c.getName(),
+                        categoryName,
+                        c.getUnitOfMeasure(),
+                        "-",
+                        0,
+                        "-",
+                        "-",
+                        level,
+                        status
+                });
+            }
         }
 
         lblSummary.setText(total + " components  |  " + low + " low stock  |  " + out + " out of stock");
@@ -302,8 +338,6 @@ public class ComponentPanel extends JPanel {
             cmbSupplier.setSelectedIndex(supplierIndex);
         }
     }
-
-    // ---------------------------------------------------------------- Component form
 
     private void fillForm() {
         int row = table.getSelectedRow();
@@ -392,16 +426,13 @@ public class ComponentPanel extends JPanel {
         }
     }
 
-    // ---------------------------------------------------------------- Stock form
-
-    // Supplier and Expiry are only used for perishable components.
-    // Greyed out when nothing is selected or the component is non-perishable.
+    // Supplier is used once a component is selected. Expiry is only for perishable components.
     private void updateStockFields() {
         boolean perishable = editing != null
                 && editing.getCategory() != null
                 && editing.getCategory().isPerishable();
 
-        cmbSupplier.setEnabled(perishable);
+        cmbSupplier.setEnabled(editing != null);
         txtExpiry.setEnabled(perishable);
         if (!perishable) {
             txtExpiry.setText("");
@@ -416,15 +447,11 @@ public class ComponentPanel extends JPanel {
 
         boolean perishable = editing.getCategory() != null && editing.getCategory().isPerishable();
 
-        // Only perishable items have a supplier
-        Supplier supplier = null;
-        if (perishable) {
-            if (suppliers.isEmpty()) {
-                showMessage(lblStockMessage, "Add a supplier first (Suppliers screen).", true);
-                return;
-            }
-            supplier = suppliers.get(cmbSupplier.getSelectedIndex());
+        if (suppliers.isEmpty()) {
+            showMessage(lblStockMessage, "Add a supplier first (Suppliers screen).", true);
+            return;
         }
+        Supplier supplier = suppliers.get(cmbSupplier.getSelectedIndex());
 
         BigDecimal cost = parseMoney(txtBatchCost.getText());
         if (cost == null) {
@@ -469,8 +496,6 @@ public class ComponentPanel extends JPanel {
             showMessage(lblStockMessage, "Not saved: " + ex.getMessage(), true);
         }
     }
-
-    // ---------------------------------------------------------------- Helpers
 
     // Shows a message inside the panel (red = problem, green = success)
     private void showMessage(JLabel label, String text, boolean isError) {

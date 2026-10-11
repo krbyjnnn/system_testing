@@ -450,10 +450,8 @@ public class POSPanel extends JPanel {
 
     // Clicking a card adds one piece of that product to the cart
     private void addToCart(Product product) {
-        int qty = 1;
         int available = stockOf(product);
 
-        // Is this product already in the cart?
         int cartIndex = -1;
         for (int i = 0; i < cartProducts.size(); i++) {
             if (cartProducts.get(i).getProductId().equals(product.getProductId())) {
@@ -461,13 +459,28 @@ public class POSPanel extends JPanel {
             }
         }
         int inCart = cartIndex >= 0 ? cartQuantities.get(cartIndex) : 0;
+        int left = available - inCart;
 
-        if (inCart + qty > available) {
+        if (left <= 0) {
             JOptionPane.showMessageDialog(this,
                     "Not enough stock. Available: " + available + ", already in cart: " + inCart,
                     "Insufficient Stock", JOptionPane.WARNING_MESSAGE);
             return;
         }
+
+        JSpinner spnQty = new JSpinner(new SpinnerNumberModel(1, 1, left, 1));
+        JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
+        form.add(new JLabel("Add " + product.getProductName() + " (" + peso(product.getSellingPrice()) + ") to the order?"));
+        form.add(new JLabel("Quantity (max " + left + "):"));
+        form.add(spnQty);
+
+        int choice = JOptionPane.showConfirmDialog(this, form, "Confirm Add",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        int qty = (int) spnQty.getValue();
 
         if (cartIndex >= 0) {
             cartQuantities.set(cartIndex, inCart + qty);
@@ -476,7 +489,7 @@ public class POSPanel extends JPanel {
             cartQuantities.add(qty);
         }
         refreshCart();
-    }
+}
 
     // Voiding takes a line out of the cart. Like a cashier system, it needs a supervisor:
     // a Manager enters their void passkey, and the void is written to the audit trail.

@@ -4,6 +4,7 @@ import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
 import com.flowershop.flowershop.service.ProductionService;
 import com.flowershop.flowershop.service.SaleService;
+import com.flowershop.flowershop.service.StockReceivingService;
 import com.flowershop.flowershop.ui.panels.*;
 
 import javax.swing.*;
@@ -69,14 +70,19 @@ public class MainFrame extends JFrame {
                         SpringContext.getBean(CategoryRepository.class),
                         SpringContext.getBean(SupplierRepository.class),
                         SpringContext.getBean(RecipeRepository.class),
-                        SpringContext.getBean(ProductionService.class)
+                        SpringContext.getBean(ProductionService.class),
+                        SpringContext.getBean(StockReceivingService.class),
+                        currentUser
                 ),
                 "INVENTORY"
         );
         contentArea.add(
                 new SupplierPanel(
                         SpringContext.getBean(SupplierRepository.class),
-                        SpringContext.getBean(ComponentInventoryRepository.class)
+                        SpringContext.getBean(ComponentInventoryRepository.class),
+                        SpringContext.getBean(ProcurementRepository.class),
+                        SpringContext.getBean(ComponentRepository.class),
+                        currentUser
                 ),
                 "SUPPLIERS"
         );

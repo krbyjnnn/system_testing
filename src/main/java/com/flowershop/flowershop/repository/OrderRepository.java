@@ -17,10 +17,17 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
     List<Order> findByOrderStatus(String orderStatus);
     Page<Order> findAllByOrderByOrderDateDesc(Pageable pageable);
 
-    @Query("SELECT COALESCE(SUM(o.totalAmount), 0) FROM Order o WHERE o.orderDate >= :startDate AND o.orderDate <= :endDate")
+    // Sales cards: only COMPLETED (paid) orders, so unpaid pay-later orders are not counted yet
+    @Query("SELECT COALESCE(SUM(o.totalAmount), 0) FROM Order o WHERE o.orderStatus = 'COMPLETED' AND o.orderDate >= :startDate AND o.orderDate <= :endDate")
     BigDecimal calculateRevenueBetween(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 
-    @Query("SELECT COALESCE(SUM(o.totalAmount), 0) FROM Order o WHERE o.orderStatus = 'COMPLETED' AND o.orderDate >= :startDate AND o.orderDate < :endDate")
+    // Net flow "money in": counted by the day the payment was received, not the day the order was placed
+    @Query(value = """
+            SELECT COALESCE(SUM(amount_paid), 0)
+            FROM payment
+            WHERE payment_status = 'PAID'
+            AND payment_date >= :startDate AND payment_date < :endDate
+            """, nativeQuery = true)
     BigDecimal calculateMoneyInBetween(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 
     @Query(value = """

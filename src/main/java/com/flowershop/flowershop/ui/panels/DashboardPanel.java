@@ -11,12 +11,12 @@ import com.flowershop.flowershop.repository.ProductInventoryRepository;
 import com.flowershop.flowershop.repository.ProductRepository;
 import com.flowershop.flowershop.repository.ReturnsRepository;
 import com.flowershop.flowershop.repository.SalesPoint;
-import com.flowershop.flowershop.repository.SpoilageRow;
 import com.flowershop.flowershop.ui.SpringContext;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
 import javax.swing.*;
+import javax.swing.border.Border;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
@@ -27,18 +27,25 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.Temporal;
 import java.time.temporal.TemporalAdjusters;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
+/** Owner dashboard: KPI cards, sales chart, monthly net flow and four "view all" preview tables. */
 public class DashboardPanel extends JPanel {
 
-    private static final int PREVIEW_SIZE = 10;
-    private static final int DIALOG_SIZE = 15;
-    private static final int LOW_STOCK_LIMIT = 5;
+    private static final int PREVIEW_SIZE = 10;   // rows shown in each dashboard preview
+    private static final int DIALOG_SIZE = 15;    // rows per page in the "View all" dialog
+    private static final int LOW_STOCK_LIMIT = 5; // batches at or below this quantity are "low stock"
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final Color BORDER = new Color(220, 224, 230);
+    private static final Color TEXT = new Color(40, 40, 40);
+    private static final Color GREEN = new Color(40, 167, 69);
+    private static final Color BLUE = new Color(13, 110, 253);
 
     private final ProductRepository productRepository;
     private final ProductInventoryRepository productInventoryRepository;
@@ -48,23 +55,20 @@ public class DashboardPanel extends JPanel {
     private final DisputeRepository disputeRepository;
     private final ComponentInventoryRepository componentInventoryRepository;
 
-    private JLabel lblDailySales;
-    private JLabel lblItemsSold;
-    private JLabel lblTotalProducts;
-    private JLabel lblWeeklySales;
-    private JLabel lblMonthlySales;
-    private JLabel lblNetFlowTitle;
-    private JLabel lblNetFlow;
+    private final JLabel lblDailySales = new JLabel("₱0.00", SwingConstants.CENTER);
+    private final JLabel lblItemsSold = new JLabel("0", SwingConstants.CENTER);
+    private final JLabel lblTotalProducts = new JLabel("0", SwingConstants.CENTER);
+    private final JLabel lblWeeklySales = new JLabel("₱0.00");
+    private final JLabel lblMonthlySales = new JLabel("₱0.00");
+    private final JLabel lblNetFlow = new JLabel("₱0.00");
 
     private final SalesChart salesChart = new SalesChart();
     private final List<PreviewSection> sections = new ArrayList<>();
-    private String chartMode = "DAILY";
+    private String chartMode = "DAILY"; // DAILY, WEEKLY or MONTHLY (only affects the chart)
 
-    public DashboardPanel(
-            ProductRepository productRepository,
-            ProductInventoryRepository productInventoryRepository,
-            OrderRepository orderRepository
-    ) {
+    public DashboardPanel(ProductRepository productRepository,
+                          ProductInventoryRepository productInventoryRepository,
+                          OrderRepository orderRepository) {
         this.productRepository = productRepository;
         this.productInventoryRepository = productInventoryRepository;
         this.orderRepository = orderRepository;
@@ -77,56 +81,64 @@ public class DashboardPanel extends JPanel {
         refreshDashboardData();
     }
 
+    // ------------------------------------------------------------------ UI building
+
     private void initUI() {
         setLayout(new BorderLayout(15, 15));
         setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
         setBackground(new Color(245, 247, 250));
 
-        JPanel headerPanel = new JPanel(new BorderLayout());
-        headerPanel.setOpaque(false);
-        JLabel lblTitle = new JLabel("Executive Dashboard & Overview");
-        lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
-        headerPanel.add(lblTitle, BorderLayout.WEST);
-        add(headerPanel, BorderLayout.NORTH);
+        JLabel title = new JLabel("Executive Dashboard & Overview");
+        title.setFont(font(Font.BOLD, 22));
+        add(title, BorderLayout.NORTH);
 
-        JPanel centerPanel = new JPanel(new GridBagLayout());
-        centerPanel.setOpaque(false);
-
+        // Three stacked rows: KPI cards, chart + side bars, preview tables
+        JPanel center = new JPanel(new GridBagLayout());
+        center.setOpaque(false);
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.gridx = 0;
         gbc.weightx = 1;
         gbc.fill = GridBagConstraints.BOTH;
 
         gbc.gridy = 0;
-        gbc.weighty = 0;
         gbc.insets = new Insets(0, 0, 15, 0);
-        centerPanel.add(createCardsRow(), gbc);
+        center.add(createCardsRow(), gbc);
 
         gbc.gridy = 1;
         gbc.weighty = 0.45;
-        centerPanel.add(createMiddleRow(), gbc);
+        center.add(createMiddleRow(), gbc);
 
         gbc.gridy = 2;
         gbc.weighty = 0.55;
         gbc.insets = new Insets(0, 0, 0, 0);
-        centerPanel.add(createBottomRow(), gbc);
+        center.add(createBottomRow(), gbc);
 
-        add(centerPanel, BorderLayout.CENTER);
+        add(center, BorderLayout.CENTER);
     }
 
     private JPanel createCardsRow() {
-        JPanel cardsGrid = new JPanel(new GridLayout(1, 3, 15, 0));
-        cardsGrid.setOpaque(false);
+        JPanel row = new JPanel(new GridLayout(1, 3, 15, 0));
+        row.setOpaque(false);
+        row.add(createKpiCard("Today's Sales", lblDailySales, GREEN));
+        row.add(createKpiCard("Items Sold", lblItemsSold, new Color(23, 162, 184)));
+        row.add(createKpiCard("Active Products", lblTotalProducts, new Color(255, 193, 7)));
+        return row;
+    }
 
-        lblDailySales = new JLabel("₱0.00", SwingConstants.CENTER);
-        lblItemsSold = new JLabel("0", SwingConstants.CENTER);
-        lblTotalProducts = new JLabel("0", SwingConstants.CENTER);
+    private JPanel createKpiCard(String title, JLabel value, Color accent) {
+        JLabel lblTitle = new JLabel(title, SwingConstants.CENTER);
+        lblTitle.setFont(font(Font.PLAIN, 12));
+        lblTitle.setForeground(Color.GRAY);
 
-        cardsGrid.add(createKpiCard("Today's Sales", lblDailySales, new Color(40, 167, 69)));
-        cardsGrid.add(createKpiCard("Items Sold", lblItemsSold, new Color(23, 162, 184)));
-        cardsGrid.add(createKpiCard("Active Products", lblTotalProducts, new Color(255, 193, 7)));
+        value.setFont(font(Font.BOLD, 18));
+        value.setForeground(TEXT);
 
-        return cardsGrid;
+        JPanel card = new JPanel(new BorderLayout(5, 5));
+        card.setBackground(Color.WHITE);
+        card.setBorder(border(BorderFactory.createMatteBorder(4, 0, 0, 0, accent), 12, 12));
+        card.add(lblTitle, BorderLayout.NORTH);
+        card.add(value, BorderLayout.CENTER);
+        return card;
     }
 
     private JPanel createMiddleRow() {
@@ -135,11 +147,9 @@ public class DashboardPanel extends JPanel {
         row.setPreferredSize(new Dimension(100, 250));
 
         GridBagConstraints gbc = new GridBagConstraints();
-        gbc.gridy = 0;
         gbc.weighty = 1;
         gbc.fill = GridBagConstraints.BOTH;
 
-        gbc.gridx = 0;
         gbc.weightx = 0.65;
         gbc.insets = new Insets(0, 0, 15, 15);
         row.add(createChartPanel(), gbc);
@@ -148,57 +158,45 @@ public class DashboardPanel extends JPanel {
         gbc.weightx = 0.35;
         gbc.insets = new Insets(0, 0, 15, 0);
         row.add(createBarsPanel(), gbc);
-
         return row;
     }
 
     private JPanel createChartPanel() {
-        JPanel panel = new JPanel(new BorderLayout(0, 8));
-        panel.setBackground(Color.WHITE);
-        panel.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
-                BorderFactory.createEmptyBorder(12, 15, 12, 15)
-        ));
+        JLabel lblTitle = new JLabel("Sales");
+        lblTitle.setFont(font(Font.BOLD, 16));
+        lblTitle.setForeground(TEXT);
 
-        JLabel lblChartTitle = new JLabel("Sales");
-        lblChartTitle.setFont(new Font("Segoe UI", Font.BOLD, 16));
-        lblChartTitle.setForeground(new Color(40, 40, 40));
-
-        JToggleButton btnDaily = createFilterButton("Daily", "DAILY");
-        JToggleButton btnWeekly = createFilterButton("Weekly", "WEEKLY");
-        JToggleButton btnMonthly = createFilterButton("Monthly", "MONTHLY");
-        btnDaily.setSelected(true);
-
-        ButtonGroup group = new ButtonGroup();
-        group.add(btnDaily);
-        group.add(btnWeekly);
-        group.add(btnMonthly);
-
+        // Daily / Weekly / Monthly toggle buttons (only one can be selected)
         JPanel filters = new JPanel(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         filters.setOpaque(false);
-        filters.add(btnDaily);
-        filters.add(btnWeekly);
-        filters.add(btnMonthly);
+        ButtonGroup group = new ButtonGroup();
+        for (String[] f : new String[][]{{"Daily", "DAILY"}, {"Weekly", "WEEKLY"}, {"Monthly", "MONTHLY"}}) {
+            JToggleButton button = createFilterButton(f[0], f[1]);
+            group.add(button);
+            filters.add(button);
+        }
 
         JPanel titleRow = new JPanel(new BorderLayout());
         titleRow.setOpaque(false);
-        titleRow.add(lblChartTitle, BorderLayout.WEST);
+        titleRow.add(lblTitle, BorderLayout.WEST);
         titleRow.add(filters, BorderLayout.EAST);
 
+        JPanel panel = new JPanel(new BorderLayout(0, 8));
+        panel.setBackground(Color.WHITE);
+        panel.setBorder(border(null, 12, 15));
         panel.add(titleRow, BorderLayout.NORTH);
         panel.add(salesChart, BorderLayout.CENTER);
-
         return panel;
     }
 
+    /** Chart range button; it only changes the chart, not the net flow. */
     private JToggleButton createFilterButton(String text, String mode) {
-        JToggleButton button = new JToggleButton(text);
-        button.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        JToggleButton button = new JToggleButton(text, mode.equals(chartMode));
+        button.setFont(font(Font.PLAIN, 12));
         button.setFocusPainted(false);
         button.addActionListener(e -> {
             chartMode = mode;
             runSafely(this::loadChart);
-            runSafely(this::loadNetFlow);
         });
         return button;
     }
@@ -206,39 +204,25 @@ public class DashboardPanel extends JPanel {
     private JPanel createBarsPanel() {
         JPanel bars = new JPanel(new GridLayout(3, 1, 0, 12));
         bars.setOpaque(false);
-
-        lblWeeklySales = new JLabel("₱0.00");
-        lblMonthlySales = new JLabel("₱0.00");
-        lblNetFlowTitle = new JLabel("Net Flow");
-        lblNetFlow = new JLabel("₱0.00");
-
-        bars.add(createBar(new JLabel("Weekly Sales"), lblWeeklySales, new Color(23, 162, 184)));
-        bars.add(createBar(new JLabel("Monthly Sales"), lblMonthlySales, new Color(111, 66, 193)));
-        bars.add(createBar(lblNetFlowTitle, lblNetFlow, new Color(40, 167, 69)));
-
+        bars.add(createBar("Weekly Sales", lblWeeklySales, new Color(23, 162, 184)));
+        bars.add(createBar("Monthly Sales", lblMonthlySales, new Color(111, 66, 193)));
+        bars.add(createBar("Monthly Net Flow", lblNetFlow, GREEN));
         return bars;
     }
 
-    private JPanel createBar(JLabel titleLabel, JLabel valueLabel, Color accentColor) {
+    private JPanel createBar(String title, JLabel value, Color accent) {
+        JLabel lblTitle = new JLabel(title);
+        lblTitle.setFont(font(Font.PLAIN, 14));
+        lblTitle.setForeground(Color.GRAY);
+
+        value.setFont(font(Font.BOLD, 18));
+        value.setForeground(TEXT);
+
         JPanel bar = new JPanel(new BorderLayout(10, 0));
         bar.setBackground(Color.WHITE);
-        bar.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(0, 4, 0, 0, accentColor),
-                BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
-                        BorderFactory.createEmptyBorder(8, 14, 8, 14)
-                )
-        ));
-
-        titleLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
-        titleLabel.setForeground(Color.GRAY);
-
-        valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
-        valueLabel.setForeground(new Color(40, 40, 40));
-
-        bar.add(titleLabel, BorderLayout.WEST);
-        bar.add(valueLabel, BorderLayout.EAST);
-
+        bar.setBorder(border(BorderFactory.createMatteBorder(0, 4, 0, 0, accent), 8, 14));
+        bar.add(lblTitle, BorderLayout.WEST);
+        bar.add(value, BorderLayout.EAST);
         return bar;
     }
 
@@ -247,91 +231,177 @@ public class DashboardPanel extends JPanel {
         row.setOpaque(false);
         row.setPreferredSize(new Dimension(100, 300));
 
-        sections.add(new PreviewSection(
-                "Low Stock",
-                new String[]{"ID", "Product Name", "Category", "Quantity"},
-                new int[]{1, 3},
-                this::loadLowStock
-        ));
-        sections.add(new PreviewSection(
-                "Spoilage",
-                new String[]{"Type", "Item", "Quantity", "Expiry Date"},
-                new int[]{1, 3},
-                this::loadSpoilage
-        ));
-        sections.add(new PreviewSection(
-                "Transactions",
+        // previewColumns = indexes of the columns shown in the small dashboard table;
+        // the "View all" dialog shows every column.
+        sections.add(new PreviewSection("Low Stock",
+                new String[]{"ID", "Product Name", "Category", "Quantity"}, new int[]{1, 3}, this::loadLowStock));
+        sections.add(new PreviewSection("Spoilage",
+                new String[]{"Type", "Item", "Quantity", "Expiry Date"}, new int[]{1, 3}, this::loadSpoilage));
+        sections.add(new PreviewSection("Transactions",
                 new String[]{"Transaction No.", "Date & Time", "Type", "Cashier", "Total", "Status"},
-                new int[]{0, 4, 5},
-                this::loadTransactions
-        ));
-        sections.add(new PreviewSection(
-                "Disputes",
+                new int[]{0, 4, 5}, this::loadTransactions));
+        sections.add(new PreviewSection("Disputes",
                 new String[]{"ID", "Transaction No.", "Customer", "Complaint", "Status", "Date Filed"},
-                new int[]{2, 4},
-                this::loadDisputes
-        ));
+                new int[]{2, 4}, this::loadDisputes));
 
-        for (PreviewSection section : sections) {
-            row.add(section.panel);
-        }
-
+        sections.forEach(s -> row.add(s.panel));
         return row;
     }
 
-    private JPanel createKpiCard(String title, JLabel valueLabel, Color accentColor) {
-        JPanel card = new JPanel(new BorderLayout(5, 5));
-        card.setBackground(Color.WHITE);
-        card.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createMatteBorder(4, 0, 0, 0, accentColor),
-                BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
-                        BorderFactory.createEmptyBorder(12, 12, 12, 12)
-                )
-        ));
+    // ------------------------------------------------------------------ data loading
 
-        JLabel lblCardTitle = new JLabel(title, SwingConstants.CENTER);
-        lblCardTitle.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-        lblCardTitle.setForeground(Color.GRAY);
-
-        valueLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
-        valueLabel.setForeground(new Color(40, 40, 40));
-
-        card.add(lblCardTitle, BorderLayout.NORTH);
-        card.add(valueLabel, BorderLayout.CENTER);
-
-        return card;
-    }
-
+    /** Reloads every number, the chart and all preview tables. Call this after any sale/return/dispute. */
     public void refreshDashboardData() {
         LocalDateTime now = LocalDateTime.now();
+        LocalDate today = LocalDate.now();
 
-        LocalDateTime startOfDay = LocalDate.now().atStartOfDay();
-        BigDecimal daily = orderRepository != null ? orderRepository.calculateRevenueBetween(startOfDay, now) : BigDecimal.ZERO;
-        lblDailySales.setText("₱" + String.format("%.2f", daily != null ? daily : BigDecimal.ZERO));
-
-        LocalDateTime startOfWeek = LocalDate.now().minusDays(7).atStartOfDay();
-        BigDecimal weekly = orderRepository != null ? orderRepository.calculateRevenueBetween(startOfWeek, now) : BigDecimal.ZERO;
-        lblWeeklySales.setText("₱" + String.format("%.2f", weekly != null ? weekly : BigDecimal.ZERO));
-
-        LocalDateTime startOfMonth = LocalDate.now().withDayOfMonth(1).atStartOfDay();
-        BigDecimal monthly = orderRepository != null ? orderRepository.calculateRevenueBetween(startOfMonth, now) : BigDecimal.ZERO;
-        lblMonthlySales.setText("₱" + String.format("%.2f", monthly != null ? monthly : BigDecimal.ZERO));
-
-        long count = productRepository != null ? productRepository.countActiveProducts() : 0;
-        lblTotalProducts.setText(String.valueOf(count));
+        lblDailySales.setText(money(orderRepository.calculateRevenueBetween(today.atStartOfDay(), now)));
+        lblWeeklySales.setText(money(orderRepository.calculateRevenueBetween(today.minusDays(7).atStartOfDay(), now)));
+        lblMonthlySales.setText(money(orderRepository.calculateRevenueBetween(today.withDayOfMonth(1).atStartOfDay(), now)));
+        lblTotalProducts.setText(String.valueOf(productRepository.countActiveProducts()));
 
         runSafely(() -> {
-            Long sold = orderItemRepository != null ? orderItemRepository.countItemsSoldToday() : 0L;
+            Long sold = orderItemRepository.countItemsSoldToday();
             lblItemsSold.setText(String.valueOf(sold != null ? sold : 0L));
         });
         runSafely(this::loadChart);
         runSafely(this::loadNetFlow);
-        for (PreviewSection section : sections) {
-            runSafely(section::load);
-        }
+        sections.forEach(s -> runSafely(s::load));
     }
 
+    /** Monthly net flow = money received this month minus refunds issued this month. */
+    private void loadNetFlow() {
+        LocalDate today = LocalDate.now();
+        LocalDateTime start = today.withDayOfMonth(1).atStartOfDay();
+        LocalDateTime end = today.plusDays(1).atStartOfDay();
+
+        BigDecimal net = nz(orderRepository.calculateMoneyInBetween(start, end))
+                .subtract(nz(returnsRepository.sumRefundsBetween(start, end)));
+
+        lblNetFlow.setText((net.signum() < 0 ? "-" : "") + money(net.abs()));
+        lblNetFlow.setForeground(net.signum() < 0 ? new Color(220, 53, 69) : GREEN);
+    }
+
+    /** Builds the chart points: 7 days, 8 weeks (Monday start) or 12 months, filling gaps with zero. */
+    private void loadChart() {
+        boolean weekly = "WEEKLY".equals(chartMode);
+        boolean monthly = "MONTHLY".equals(chartMode);
+
+        Map<String, BigDecimal> found = toMap(monthly ? orderRepository.findMonthlySales()
+                : weekly ? orderRepository.findWeeklySales() : orderRepository.findDailySales());
+
+        int count = monthly ? 12 : weekly ? 8 : 7;
+        DateTimeFormatter labelFormat = DateTimeFormatter.ofPattern(monthly ? "MMM yy" : "MMM d");
+        LocalDate today = LocalDate.now();
+        LocalDate thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+
+        List<String> labels = new ArrayList<>();
+        List<BigDecimal> values = new ArrayList<>();
+        for (int i = count - 1; i >= 0; i--) {
+            Temporal period;
+            if (monthly) period = YearMonth.from(today).minusMonths(i);
+            else if (weekly) period = thisMonday.minusWeeks(i);
+            else period = today.minusDays(i);
+
+            labels.add(labelFormat.format(period));
+            values.add(found.getOrDefault(period.toString(), BigDecimal.ZERO)); // key matches the repository's period string
+        }
+        salesChart.setData(labels, values);
+    }
+
+    /** Turns repository rows into a period -> sales lookup (e.g. "2026-10-09" -> 2998.00). */
+    private Map<String, BigDecimal> toMap(List<SalesPoint> points) {
+        Map<String, BigDecimal> map = new HashMap<>();
+        for (SalesPoint point : points) {
+            map.put(point.getPeriod(), nz(point.getSales()));
+        }
+        return map;
+    }
+
+    private PageData loadLowStock(int page, int size) {
+        return toData(productInventoryRepository.findLowStockPage(LOW_STOCK_LIMIT, PageRequest.of(page, size)),
+                (ProductInventory i) -> new Object[]{
+                        i.getPbatchId(),
+                        i.getProduct() != null ? i.getProduct().getProductName() : "N/A",
+                        i.getProduct() != null && i.getProduct().getCategory() != null
+                                ? i.getProduct().getCategory().getName() : "N/A",
+                        i.getQuantityOnHand()});
+    }
+
+    private PageData loadSpoilage(int page, int size) {
+        return toData(componentInventoryRepository.findSpoilage(PageRequest.of(page, size)),
+                i -> new Object[]{i.getItemType(), i.getItemName(), i.getQuantityOnHand(), i.getExpiryDate()});
+    }
+
+    private PageData loadTransactions(int page, int size) {
+        return toData(orderRepository.findAllByOrderByOrderDateDesc(PageRequest.of(page, size)),
+                (Order o) -> new Object[]{
+                        o.getTransactionNumber(),
+                        o.getOrderDate() != null ? o.getOrderDate().format(DATE_TIME) : "",
+                        o.getOrderType(),
+                        o.getUser() != null ? o.getUser().getFullName() : "N/A",
+                        money(o.getTotalAmount()),
+                        o.getOrderStatus()});
+    }
+
+    private PageData loadDisputes(int page, int size) {
+        return toData(disputeRepository.findAllByOrderByDateFiledDesc(PageRequest.of(page, size)),
+                (Dispute d) -> new Object[]{
+                        d.getDisputeId(),
+                        d.getOrder() != null ? d.getOrder().getTransactionNumber() : "N/A",
+                        d.getCustomerName(),
+                        d.getComplaint(),
+                        d.getStatus(),
+                        d.getDateFiled() != null ? d.getDateFiled().format(DATE_TIME) : ""});
+    }
+
+    /** Converts one page of entities into table rows using the given row mapper. */
+    private <T> PageData toData(Page<T> result, Function<T, Object[]> toRow) {
+        List<Object[]> rows = new ArrayList<>();
+        result.getContent().forEach(item -> rows.add(toRow.apply(item)));
+        return new PageData(rows, result.getTotalPages());
+    }
+
+    // ------------------------------------------------------------------ small helpers
+
+    private static Font font(int style, int size) {
+        return new Font("Segoe UI", style, size);
+    }
+
+    private static BigDecimal nz(BigDecimal value) {
+        return value != null ? value : BigDecimal.ZERO;
+    }
+
+    private static String money(BigDecimal value) {
+        return "₱" + String.format("%.2f", nz(value));
+    }
+
+    /** Light-grey outline with padding, optionally preceded by a coloured accent edge. */
+    private static Border border(Border accent, int vertical, int horizontal) {
+        Border box = BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(BORDER, 1),
+                BorderFactory.createEmptyBorder(vertical, horizontal, vertical, horizontal));
+        return accent == null ? box : BorderFactory.createCompoundBorder(accent, box);
+    }
+
+    private static JTable readOnlyTable(DefaultTableModel model, int rowHeight, int fontSize) {
+        JTable table = new JTable(model);
+        table.setRowHeight(rowHeight);
+        table.setFont(font(Font.PLAIN, fontSize));
+        table.getTableHeader().setFont(font(Font.BOLD, fontSize));
+        return table;
+    }
+
+    private static DefaultTableModel readOnlyModel(String[] columns) {
+        return new DefaultTableModel(columns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+    }
+
+    /** One bad query shouldn't blank the whole dashboard, so each section loads in isolation. */
     private void runSafely(Runnable task) {
         try {
             task.run();
@@ -340,171 +410,15 @@ public class DashboardPanel extends JPanel {
         }
     }
 
-    private void loadChart() {
-        List<String> labels = new ArrayList<>();
-        List<BigDecimal> values = new ArrayList<>();
-
-        if (orderRepository != null) {
-            LocalDate today = LocalDate.now();
-
-            if ("WEEKLY".equals(chartMode)) {
-                Map<String, BigDecimal> found = toMap(orderRepository.findWeeklySales());
-                LocalDate thisMonday = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
-                DateTimeFormatter labelFormat = DateTimeFormatter.ofPattern("MMM d");
-                for (int i = 7; i >= 0; i--) {
-                    LocalDate weekStart = thisMonday.minusWeeks(i);
-                    labels.add(weekStart.format(labelFormat));
-                    values.add(found.getOrDefault(weekStart.toString(), BigDecimal.ZERO));
-                }
-            } else if ("MONTHLY".equals(chartMode)) {
-                Map<String, BigDecimal> found = toMap(orderRepository.findMonthlySales());
-                YearMonth thisMonth = YearMonth.from(today);
-                DateTimeFormatter labelFormat = DateTimeFormatter.ofPattern("MMM yy");
-                for (int i = 11; i >= 0; i--) {
-                    YearMonth month = thisMonth.minusMonths(i);
-                    labels.add(month.format(labelFormat));
-                    values.add(found.getOrDefault(month.toString(), BigDecimal.ZERO));
-                }
-            } else {
-                Map<String, BigDecimal> found = toMap(orderRepository.findDailySales());
-                DateTimeFormatter labelFormat = DateTimeFormatter.ofPattern("MMM d");
-                for (int i = 6; i >= 0; i--) {
-                    LocalDate day = today.minusDays(i);
-                    labels.add(day.format(labelFormat));
-                    values.add(found.getOrDefault(day.toString(), BigDecimal.ZERO));
-                }
-            }
-        }
-
-        salesChart.setData(labels, values);
-    }
-
-    private Map<String, BigDecimal> toMap(List<SalesPoint> points) {
-        Map<String, BigDecimal> map = new HashMap<>();
-        for (SalesPoint point : points) {
-            map.put(point.getPeriod(), point.getSales() != null ? point.getSales() : BigDecimal.ZERO);
-        }
-        return map;
-    }
-
-    private void loadNetFlow() {
-        LocalDate today = LocalDate.now();
-        LocalDateTime start;
-        String periodName;
-
-        if ("WEEKLY".equals(chartMode)) {
-            start = today.minusDays(7).atStartOfDay();
-            periodName = "Last 7 Days";
-        } else if ("MONTHLY".equals(chartMode)) {
-            start = today.withDayOfMonth(1).atStartOfDay();
-            periodName = "This Month";
-        } else {
-            start = today.atStartOfDay();
-            periodName = "Today";
-        }
-        LocalDateTime end = today.plusDays(1).atStartOfDay();
-
-        BigDecimal moneyIn = orderRepository != null ? orderRepository.calculateMoneyInBetween(start, end) : BigDecimal.ZERO;
-        BigDecimal moneyOut = returnsRepository != null ? returnsRepository.sumRefundsBetween(start, end) : BigDecimal.ZERO;
-        BigDecimal net = (moneyIn != null ? moneyIn : BigDecimal.ZERO).subtract(moneyOut != null ? moneyOut : BigDecimal.ZERO);
-
-        lblNetFlowTitle.setText("Net Flow (" + periodName + ")");
-        lblNetFlow.setText((net.signum() < 0 ? "-₱" : "₱") + String.format("%.2f", net.abs()));
-        lblNetFlow.setForeground(net.signum() < 0 ? new Color(220, 53, 69) : new Color(40, 167, 69));
-    }
-
-    private PageData loadLowStock(int page, int size) {
-        List<Object[]> rows = new ArrayList<>();
-        int totalPages = 0;
-
-        if (productInventoryRepository != null) {
-            Page<ProductInventory> result = productInventoryRepository.findLowStockPage(LOW_STOCK_LIMIT, PageRequest.of(page, size));
-            for (ProductInventory item : result.getContent()) {
-                rows.add(new Object[]{
-                    item.getPbatchId(),
-                    item.getProduct() != null ? item.getProduct().getProductName() : "N/A",
-                    (item.getProduct() != null && item.getProduct().getCategory() != null)
-                        ? item.getProduct().getCategory().getName() : "N/A",
-                    item.getQuantityOnHand()
-                });
-            }
-            totalPages = result.getTotalPages();
-        }
-
-        return new PageData(rows, totalPages);
-    }
-
-    private PageData loadSpoilage(int page, int size) {
-        List<Object[]> rows = new ArrayList<>();
-        int totalPages = 0;
-
-        if (componentInventoryRepository != null) {
-            Page<SpoilageRow> result = componentInventoryRepository.findSpoilage(PageRequest.of(page, size));
-            for (SpoilageRow item : result.getContent()) {
-                rows.add(new Object[]{
-                    item.getItemType(),
-                    item.getItemName(),
-                    item.getQuantityOnHand(),
-                    item.getExpiryDate()
-                });
-            }
-            totalPages = result.getTotalPages();
-        }
-
-        return new PageData(rows, totalPages);
-    }
-
-    private PageData loadTransactions(int page, int size) {
-        List<Object[]> rows = new ArrayList<>();
-        int totalPages = 0;
-
-        if (orderRepository != null) {
-            Page<Order> result = orderRepository.findAllByOrderByOrderDateDesc(PageRequest.of(page, size));
-            for (Order order : result.getContent()) {
-                rows.add(new Object[]{
-                    order.getTransactionNumber(),
-                    order.getOrderDate() != null ? order.getOrderDate().format(DATE_TIME) : "",
-                    order.getOrderType(),
-                    order.getUser() != null ? order.getUser().getFullName() : "N/A",
-                    "₱" + String.format("%.2f", order.getTotalAmount()),
-                    order.getOrderStatus()
-                });
-            }
-            totalPages = result.getTotalPages();
-        }
-
-        return new PageData(rows, totalPages);
-    }
-
-    private PageData loadDisputes(int page, int size) {
-        List<Object[]> rows = new ArrayList<>();
-        int totalPages = 0;
-
-        if (disputeRepository != null) {
-            Page<Dispute> result = disputeRepository.findAllByOrderByDateFiledDesc(PageRequest.of(page, size));
-            for (Dispute dispute : result.getContent()) {
-                rows.add(new Object[]{
-                    dispute.getDisputeId(),
-                    dispute.getOrder() != null ? dispute.getOrder().getTransactionNumber() : "N/A",
-                    dispute.getCustomerName(),
-                    dispute.getComplaint(),
-                    dispute.getStatus(),
-                    dispute.getDateFiled() != null ? dispute.getDateFiled().format(DATE_TIME) : ""
-                });
-            }
-            totalPages = result.getTotalPages();
-        }
-
-        return new PageData(rows, totalPages);
-    }
+    // ------------------------------------------------------------------ preview + dialog
 
     private interface PageLoader {
         PageData load(int page, int size);
     }
 
     private static class PageData {
-        private final List<Object[]> rows;
-        private final int totalPages;
+        final List<Object[]> rows;
+        final int totalPages;
 
         PageData(List<Object[]> rows, int totalPages) {
             this.rows = rows;
@@ -512,13 +426,14 @@ public class DashboardPanel extends JPanel {
         }
     }
 
+    /** A clickable dashboard card with a small table; clicking anywhere on it opens the full paged list. */
     private class PreviewSection {
         private final String title;
         private final String[] columns;
         private final int[] previewColumns;
         private final PageLoader loader;
         private final DefaultTableModel model;
-        private final JPanel panel;
+        private final JPanel panel = new JPanel(new BorderLayout(0, 8));
 
         PreviewSection(String title, String[] columns, int[] previewColumns, PageLoader loader) {
             this.title = title;
@@ -530,84 +445,64 @@ public class DashboardPanel extends JPanel {
             for (int i = 0; i < previewColumns.length; i++) {
                 previewNames[i] = columns[previewColumns[i]];
             }
+            model = readOnlyModel(previewNames);
 
-            model = new DefaultTableModel(previewNames, 0) {
-                @Override
-                public boolean isCellEditable(int row, int column) {
-                    return false;
-                }
-            };
-
-            JTable table = new JTable(model);
-            table.setRowHeight(24);
+            JTable table = readOnlyTable(model, 24, 12);
             table.setFocusable(false);
             table.setRowSelectionAllowed(false);
-            table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 12));
-            table.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-            table.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
             JScrollPane scrollPane = new JScrollPane(table);
             scrollPane.setBorder(BorderFactory.createEmptyBorder());
             scrollPane.getViewport().setBackground(Color.WHITE);
-            scrollPane.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
 
             JLabel lblTitle = new JLabel(title);
-            lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 15));
-            lblTitle.setForeground(new Color(40, 40, 40));
-
+            lblTitle.setFont(font(Font.BOLD, 15));
+            lblTitle.setForeground(TEXT);
             JLabel lblHint = new JLabel("View all >");
-            lblHint.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-            lblHint.setForeground(new Color(13, 110, 253));
+            lblHint.setFont(font(Font.PLAIN, 12));
+            lblHint.setForeground(BLUE);
 
             JPanel titleRow = new JPanel(new BorderLayout());
             titleRow.setOpaque(false);
             titleRow.add(lblTitle, BorderLayout.WEST);
             titleRow.add(lblHint, BorderLayout.EAST);
 
-            panel = new JPanel(new BorderLayout(0, 8));
             panel.setBackground(Color.WHITE);
-            panel.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(new Color(220, 224, 230), 1),
-                    BorderFactory.createEmptyBorder(12, 12, 12, 12)
-            ));
-            panel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            panel.setBorder(border(null, 12, 12));
             panel.add(titleRow, BorderLayout.NORTH);
             panel.add(scrollPane, BorderLayout.CENTER);
 
+            // Every child swallows clicks, so attach the same opener to all of them
             MouseAdapter opener = new MouseAdapter() {
                 @Override
                 public void mouseClicked(MouseEvent e) {
                     openDialog();
                 }
             };
-            table.addMouseListener(opener);
-            scrollPane.addMouseListener(opener);
-            scrollPane.getViewport().addMouseListener(opener);
-            panel.addMouseListener(opener);
-            titleRow.addMouseListener(opener);
-            lblTitle.addMouseListener(opener);
-            lblHint.addMouseListener(opener);
+            for (JComponent c : new JComponent[]{panel, titleRow, lblTitle, lblHint, table, scrollPane, scrollPane.getViewport()}) {
+                c.addMouseListener(opener);
+                c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            }
         }
 
         void load() {
-            PageData data = loader.load(0, PREVIEW_SIZE);
             model.setRowCount(0);
-            for (Object[] row : data.rows) {
-                Object[] previewRow = new Object[previewColumns.length];
+            for (Object[] row : loader.load(0, PREVIEW_SIZE).rows) {
+                Object[] preview = new Object[previewColumns.length];
                 for (int i = 0; i < previewColumns.length; i++) {
-                    previewRow[i] = row[previewColumns[i]];
+                    preview[i] = row[previewColumns[i]];
                 }
-                model.addRow(previewRow);
+                model.addRow(preview);
             }
         }
 
         void openDialog() {
-            Window owner = SwingUtilities.getWindowAncestor(DashboardPanel.this);
-            new PagedDialog(owner, title, columns, loader).setVisible(true);
+            new PagedDialog(SwingUtilities.getWindowAncestor(DashboardPanel.this), title, columns, loader).setVisible(true);
         }
     }
 
-    private class PagedDialog extends JDialog {
+    /** Full-size modal table with Previous / Next paging. */
+    private static class PagedDialog extends JDialog {
         private final PageLoader loader;
         private final DefaultTableModel model;
         private final JButton btnPrevious = new JButton("Previous");
@@ -618,36 +513,18 @@ public class DashboardPanel extends JPanel {
         PagedDialog(Window owner, String title, String[] columns, PageLoader loader) {
             super(owner, title, Dialog.ModalityType.APPLICATION_MODAL);
             this.loader = loader;
+            this.model = readOnlyModel(columns);
 
             setLayout(new BorderLayout(0, 10));
             getRootPane().setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
 
             JLabel lblTitle = new JLabel(title);
-            lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 18));
-            lblTitle.setForeground(new Color(40, 40, 40));
+            lblTitle.setFont(font(Font.BOLD, 18));
+            lblTitle.setForeground(TEXT);
+            lblPage.setFont(font(Font.PLAIN, 13));
 
-            model = new DefaultTableModel(columns, 0) {
-                @Override
-                public boolean isCellEditable(int row, int column) {
-                    return false;
-                }
-            };
-
-            JTable table = new JTable(model);
-            table.setRowHeight(28);
-            table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-            table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-
-            btnPrevious.addActionListener(e -> {
-                page--;
-                load();
-            });
-            btnNext.addActionListener(e -> {
-                page++;
-                load();
-            });
-
-            lblPage.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+            btnPrevious.addActionListener(e -> { page--; load(); });
+            btnNext.addActionListener(e -> { page++; load(); });
 
             JPanel controls = new JPanel(new FlowLayout(FlowLayout.CENTER, 15, 0));
             controls.add(btnPrevious);
@@ -655,7 +532,7 @@ public class DashboardPanel extends JPanel {
             controls.add(btnNext);
 
             add(lblTitle, BorderLayout.NORTH);
-            add(new JScrollPane(table), BorderLayout.CENTER);
+            add(new JScrollPane(readOnlyTable(model, 28, 13)), BorderLayout.CENTER);
             add(controls, BorderLayout.SOUTH);
 
             setSize(900, 560);
@@ -666,9 +543,7 @@ public class DashboardPanel extends JPanel {
         private void load() {
             PageData data = loader.load(page, DIALOG_SIZE);
             model.setRowCount(0);
-            for (Object[] row : data.rows) {
-                model.addRow(row);
-            }
+            data.rows.forEach(model::addRow);
 
             int totalPages = Math.max(1, data.totalPages);
             lblPage.setText("Page " + (page + 1) + " of " + totalPages);
@@ -677,13 +552,15 @@ public class DashboardPanel extends JPanel {
         }
     }
 
+    // ------------------------------------------------------------------ chart
+
+    /** Hand-drawn line chart: grid + peso axis on the left, one labelled dot per period. */
     private static class SalesChart extends JPanel {
         private List<String> labels = new ArrayList<>();
         private List<BigDecimal> values = new ArrayList<>();
 
         SalesChart() {
             setBackground(Color.WHITE);
-            setOpaque(true);
         }
 
         void setData(List<String> labels, List<BigDecimal> values) {
@@ -697,28 +574,21 @@ public class DashboardPanel extends JPanel {
             super.paintComponent(g);
 
             int n = values.size();
-            int left = 70;
-            int right = 20;
-            int top = 20;
-            int bottom = 30;
+            int left = 70, right = 20, top = 20, bottom = 30; // plot-area margins
             int plotW = getWidth() - left - right;
             int plotH = getHeight() - top - bottom;
-            if (n == 0 || plotW <= 0 || plotH <= 0) {
-                return;
-            }
+            if (n == 0 || plotW <= 0 || plotH <= 0) return;
 
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+            g2.setFont(font(Font.PLAIN, 11));
             FontMetrics fm = g2.getFontMetrics();
 
-            double max = 0;
-            for (BigDecimal value : values) {
-                max = Math.max(max, value.doubleValue());
-            }
-            double niceMax = max <= 0 ? 4.0 : niceCeil(max);
+            double max = values.stream().mapToDouble(BigDecimal::doubleValue).max().orElse(0);
+            double niceMax = max <= 0 ? 4.0 : niceCeil(max); // top of the y-axis, rounded to a tidy number
 
+            // Horizontal grid lines with peso labels
             int gridLines = 4;
             for (int i = 0; i <= gridLines; i++) {
                 int y = top + plotH - (int) Math.round(plotH * i / (double) gridLines);
@@ -729,14 +599,14 @@ public class DashboardPanel extends JPanel {
                 g2.drawString(text, left - 8 - fm.stringWidth(text), y + fm.getAscent() / 2 - 1);
             }
 
-            int[] xs = new int[n];
-            int[] ys = new int[n];
+            // Pixel position of every data point
+            int[] xs = new int[n], ys = new int[n];
             for (int i = 0; i < n; i++) {
                 xs[i] = n == 1 ? left + plotW / 2 : left + (int) Math.round(plotW * i / (double) (n - 1));
                 ys[i] = top + plotH - (int) Math.round(plotH * values.get(i).doubleValue() / niceMax);
             }
 
-            g2.setColor(new Color(13, 110, 253));
+            g2.setColor(BLUE);
             g2.setStroke(new BasicStroke(2.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             for (int i = 1; i < n; i++) {
                 g2.drawLine(xs[i - 1], ys[i - 1], xs[i], ys[i]);
@@ -745,40 +615,30 @@ public class DashboardPanel extends JPanel {
             for (int i = 0; i < n; i++) {
                 g2.setColor(Color.WHITE);
                 g2.fillOval(xs[i] - 5, ys[i] - 5, 10, 10);
-                g2.setColor(new Color(13, 110, 253));
+                g2.setColor(BLUE);
                 g2.setStroke(new BasicStroke(2f));
                 g2.drawOval(xs[i] - 5, ys[i] - 5, 10, 10);
 
                 g2.setColor(Color.GRAY);
-                String label = labels.get(i);
-                g2.drawString(label, xs[i] - fm.stringWidth(label) / 2, top + plotH + 18);
+                g2.drawString(labels.get(i), xs[i] - fm.stringWidth(labels.get(i)) / 2, top + plotH + 18);
 
+                // Value above the dot (skipped when crowded or zero)
                 if (n <= 12 && values.get(i).signum() > 0) {
                     String valueText = String.format("%,.0f", values.get(i));
-                    g2.setColor(new Color(40, 40, 40));
+                    g2.setColor(TEXT);
                     g2.drawString(valueText, xs[i] - fm.stringWidth(valueText) / 2, ys[i] - 10);
                 }
             }
-
             g2.dispose();
         }
 
+        /** Rounds up to 1, 2, 4, 8 or 10 times a power of ten (e.g. 2,998 -> 4,000). */
         private double niceCeil(double value) {
             double exp = Math.pow(10, Math.floor(Math.log10(value)));
-            double f = value / exp;
-            double nf;
-            if (f <= 1) {
-                nf = 1;
-            } else if (f <= 2) {
-                nf = 2;
-            } else if (f <= 4) {
-                nf = 4;
-            } else if (f <= 8) {
-                nf = 8;
-            } else {
-                nf = 10;
+            for (double step : new double[]{1, 2, 4, 8}) {
+                if (value / exp <= step) return step * exp;
             }
-            return nf * exp;
+            return 10 * exp;
         }
     }
 }

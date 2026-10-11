@@ -31,6 +31,9 @@ public class Product {
     @Column(name = "status", nullable = false, length = 50)
     private String status;
 
+    @Column(name = "image_path", length = 255)
+    private String imagePath;
+
     public Product() {
     }
     
@@ -99,4 +102,11 @@ public class Product {
         this.status = status;
     }
 
+    public String getImagePath() {
+        return imagePath;
+    }
+
+    public void setImagePath(String imagePath) {
+        this.imagePath = imagePath;
+    }
 }

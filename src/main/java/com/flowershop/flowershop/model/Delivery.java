@@ -1,8 +1,10 @@
 package com.flowershop.flowershop.model;
 
 import jakarta.persistence.*;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 
+/** Delivery or pick-up details of an order (for pick-ups the address is "Store pick-up"). */
 @Entity
 @Table(name = "delivery")
 public class Delivery {
@@ -31,6 +33,13 @@ public class Delivery {
     @Column(name = "delivery_status", nullable = false, length = 50)
     private String deliveryStatus;
 
+    // Already included in the order's total_amount; stored separately so it can be reported on its own
+    @Column(name = "delivery_fee", nullable = false, precision = 10, scale = 2)
+    private BigDecimal deliveryFee = BigDecimal.ZERO;
+
+    @Column(name = "notes", length = 255)
+    private String notes;
+
     public Delivery() {
     }
 
@@ -41,6 +50,12 @@ public class Delivery {
         this.deliveryAddress = deliveryAddress;
         this.deliveryDate = deliveryDate;
         this.deliveryStatus = deliveryStatus;
+    }
+
+    public Delivery(Order order, String recipientName, String recipientPhone, String deliveryAddress, LocalDate deliveryDate, String deliveryStatus, BigDecimal deliveryFee, String notes) {
+        this(order, recipientName, recipientPhone, deliveryAddress, deliveryDate, deliveryStatus);
+        this.deliveryFee = deliveryFee;
+        this.notes = notes;
     }
 
     public Long getDeliveryId() { 
@@ -97,5 +112,21 @@ public class Delivery {
     
     public void setDeliveryStatus(String deliveryStatus) { 
         this.deliveryStatus = deliveryStatus; 
+    }
+
+    public BigDecimal getDeliveryFee() {
+        return deliveryFee;
+    }
+
+    public void setDeliveryFee(BigDecimal deliveryFee) {
+        this.deliveryFee = deliveryFee;
+    }
+
+    public String getNotes() {
+        return notes;
+    }
+
+    public void setNotes(String notes) {
+        this.notes = notes;
     }
 }

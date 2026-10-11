@@ -18,11 +18,19 @@ public class ComponentInventory {
     private Supplier supplier;
 
     @ManyToOne
+    @JoinColumn(name = "sdelivery_id")
+    private Procurement sdelivery;
+
+    @ManyToOne
     @JoinColumn(name = "component_id", nullable = false)
     private Component component;
 
     @Column(name = "quantity_on_hand", nullable = false)
     private Integer quantityOnHand;
+
+    // What came in with the delivery. quantityOnHand goes down as the stock is used.
+    @Column(name = "quantity_received", nullable = false)
+    private Integer quantityReceived = 0;
 
     @Column(name = "reorder_level", nullable = false)
     private Integer reorderLevel;
@@ -63,6 +71,22 @@ public class ComponentInventory {
 
     public void setSupplier(Supplier supplier) { 
         this.supplier = supplier; 
+    }
+
+    public Procurement getSdelivery() {
+        return sdelivery;
+    }
+
+    public void setSdelivery(Procurement sdelivery) {
+        this.sdelivery = sdelivery;
+    }
+
+    public Integer getQuantityReceived() {
+        return quantityReceived;
+    }
+
+    public void setQuantityReceived(Integer quantityReceived) {
+        this.quantityReceived = quantityReceived;
     }
 
     public Component getComponent() { 

@@ -1,6 +1,8 @@
 package com.flowershop.flowershop.ui.panels;
 
+import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.StockReceivingService;
 import com.flowershop.flowershop.service.ProductionService;
 
 import javax.swing.*;
@@ -20,12 +22,15 @@ public class InventoryPanel extends JPanel {
             CategoryRepository categoryRepository,
             SupplierRepository supplierRepository,
             RecipeRepository recipeRepository,
-            ProductionService productionService
+            ProductionService productionService,
+            StockReceivingService stockReceivingService,
+            User currentUser
     ) {
         productPanel = new ProductPanel(productRepository, productInventoryRepository, categoryRepository,
                 supplierRepository, componentRepository, componentInventoryRepository, recipeRepository,
                 productionService);
-        componentPanel = new ComponentPanel(componentRepository, componentInventoryRepository, categoryRepository, supplierRepository);
+        componentPanel = new ComponentPanel(componentRepository, componentInventoryRepository, categoryRepository,
+                supplierRepository, stockReceivingService, currentUser);
         categoryPanel = new CategoryPanel(categoryRepository);
 
         initUI();

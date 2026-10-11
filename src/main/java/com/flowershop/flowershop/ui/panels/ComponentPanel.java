@@ -3,28 +3,31 @@ package com.flowershop.flowershop.ui.panels;
 import com.flowershop.flowershop.model.Category;
 import com.flowershop.flowershop.model.Component;
 import com.flowershop.flowershop.model.ComponentInventory;
-import com.flowershop.flowershop.model.Supplier;
+import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.StockReceivingService;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-// Components tab: add components, add stock batches, and see what is in stock.
+// Components tab: add components and see what is in stock.
+// Stock comes in through Procurement Details in the Suppliers screen.
 public class ComponentPanel extends JPanel {
 
     private final ComponentRepository componentRepository;
     private final ComponentInventoryRepository componentInventoryRepository;
     private final CategoryRepository categoryRepository;
     private final SupplierRepository supplierRepository;
+    private final StockReceivingService stockReceivingService;
+    private final User currentUser;
 
     private JTextField txtSearch;
     private JTable table;
@@ -36,33 +39,26 @@ public class ComponentPanel extends JPanel {
     private JTextField txtName;
     private JComboBox<String> cmbCategory;
     private JTextField txtUnit;
-    private JTextField txtCost;
     private JSpinner spnComponentReorder;
     private JButton btnSave;
     private JLabel lblMessage;
     private List<Category> categories = new ArrayList<>();
     private Component editing = null; // null = adding a new component
 
-    private JLabel lblStockTitle;
-    private JComboBox<String> cmbSupplier;
-    private JSpinner spnQty;
-    private JSpinner spnBatchReorder;
-    private JTextField txtBatchCost;
-    private JTextField txtReceived;
-    private JTextField txtExpiry;
-    private JLabel lblStockMessage;
-    private List<Supplier> suppliers = new ArrayList<>();
-
     public ComponentPanel(
             ComponentRepository componentRepository,
             ComponentInventoryRepository componentInventoryRepository,
             CategoryRepository categoryRepository,
-            SupplierRepository supplierRepository
+            SupplierRepository supplierRepository,
+            StockReceivingService stockReceivingService,
+            User currentUser
     ) {
         this.componentRepository = componentRepository;
         this.componentInventoryRepository = componentInventoryRepository;
         this.categoryRepository = categoryRepository;
         this.supplierRepository = supplierRepository;
+        this.stockReceivingService = stockReceivingService;
+        this.currentUser = currentUser;
 
         initUI();
         loadData();
@@ -79,20 +75,17 @@ public class ComponentPanel extends JPanel {
         txtName = new JTextField();
         cmbCategory = new JComboBox<>();
         txtUnit = new JTextField("pcs");
-        txtCost = new JTextField();
         spnComponentReorder = new JSpinner(new SpinnerNumberModel(10, 0, 99999, 1));
 
-        JPanel fields = new JPanel(new GridLayout(2, 5, 8, 2));
+        JPanel fields = new JPanel(new GridLayout(2, 4, 8, 2));
         fields.setOpaque(false);
         fields.add(new JLabel("Name"));
         fields.add(new JLabel("Category"));
         fields.add(new JLabel("Unit (pcs, stem, ...)"));
-        fields.add(new JLabel("Cost"));
         fields.add(new JLabel("Reorder Level"));
         fields.add(txtName);
         fields.add(cmbCategory);
         fields.add(txtUnit);
-        fields.add(txtCost);
         fields.add(spnComponentReorder);
 
         btnSave = new JButton("Add Component");
@@ -113,50 +106,9 @@ public class ComponentPanel extends JPanel {
         formCard.add(fields, BorderLayout.CENTER);
         formCard.add(buttonRow, BorderLayout.SOUTH);
 
-        lblStockTitle = new JLabel("Add Stock (select a component in the table first)");
-        lblStockTitle.setFont(new Font("Segoe UI", Font.BOLD, 14));
-
-        cmbSupplier = new JComboBox<>();
-        spnQty = new JSpinner(new SpinnerNumberModel(1, 1, 99999, 1));
-        spnBatchReorder = new JSpinner(new SpinnerNumberModel(10, 0, 99999, 1));
-        txtBatchCost = new JTextField();
-        txtReceived = new JTextField(LocalDate.now().toString());
-        txtExpiry = new JTextField();
-
-        JPanel stockFields = new JPanel(new GridLayout(2, 6, 8, 2));
-        stockFields.setOpaque(false);
-        stockFields.add(new JLabel("Supplier"));
-        stockFields.add(new JLabel("Quantity"));
-        stockFields.add(new JLabel("Reorder Level"));
-        stockFields.add(new JLabel("Unit Cost"));
-        stockFields.add(new JLabel("Date Received (yyyy-MM-dd)"));
-        stockFields.add(new JLabel("Expiry (perishables only)"));
-        stockFields.add(cmbSupplier);
-        stockFields.add(spnQty);
-        stockFields.add(spnBatchReorder);
-        stockFields.add(txtBatchCost);
-        stockFields.add(txtReceived);
-        stockFields.add(txtExpiry);
-
-        JButton btnAddStock = new JButton("Add Stock");
-        btnAddStock.addActionListener(e -> addStock());
-        lblStockMessage = new JLabel(" ");
-        lblStockMessage.setFont(new Font("Segoe UI", Font.BOLD, 12));
-
-        JPanel stockButtonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        stockButtonRow.setOpaque(false);
-        stockButtonRow.add(btnAddStock);
-        stockButtonRow.add(lblStockMessage);
-
-        JPanel stockCard = createCard();
-        stockCard.add(lblStockTitle, BorderLayout.NORTH);
-        stockCard.add(stockFields, BorderLayout.CENTER);
-        stockCard.add(stockButtonRow, BorderLayout.SOUTH);
-
         JPanel top = new JPanel(new GridLayout(0, 1, 0, 8));
         top.setOpaque(false);
         top.add(formCard);
-        top.add(stockCard);
 
         JPanel searchPanel = new JPanel(new BorderLayout(8, 0));
         searchPanel.setOpaque(false);
@@ -201,8 +153,6 @@ public class ComponentPanel extends JPanel {
 
         add(top, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
-
-        updateStockFields();
     }
 
     private JPanel createCard() {
@@ -310,7 +260,7 @@ public class ComponentPanel extends JPanel {
         lblSummary.setText(total + " components  |  " + low + " low stock  |  " + out + " out of stock");
     }
 
-    // Refreshes the category and supplier dropdowns (keeps what was selected)
+    // Refreshes the category dropdown (keeps what was selected)
     private void loadDropdowns() {
         // Product categories (type "Product") are not used for components, so they are left out
         int categoryIndex = cmbCategory.getSelectedIndex();
@@ -327,16 +277,6 @@ public class ComponentPanel extends JPanel {
         if (categoryIndex >= 0 && categoryIndex < categories.size()) {
             cmbCategory.setSelectedIndex(categoryIndex);
         }
-
-        int supplierIndex = cmbSupplier.getSelectedIndex();
-        suppliers = supplierRepository.findAll();
-        cmbSupplier.removeAllItems();
-        for (Supplier s : suppliers) {
-            cmbSupplier.addItem(s.getSupplierName());
-        }
-        if (supplierIndex >= 0 && supplierIndex < suppliers.size()) {
-            cmbSupplier.setSelectedIndex(supplierIndex);
-        }
     }
 
     private void fillForm() {
@@ -352,17 +292,12 @@ public class ComponentPanel extends JPanel {
 
         txtName.setText(editing.getName());
         txtUnit.setText(editing.getUnitOfMeasure());
-        txtCost.setText(editing.getCost().toString());
         spnComponentReorder.setValue(editing.getReorderLevel());
         for (int i = 0; i < categories.size(); i++) {
             if (categories.get(i).getCategoryId().equals(editing.getCategory().getCategoryId())) {
                 cmbCategory.setSelectedIndex(i);
             }
         }
-
-        lblStockTitle.setText("Add Stock to: " + editing.getName());
-        lblStockMessage.setText(" ");
-        updateStockFields();
     }
 
     private void clearForm() {
@@ -372,16 +307,12 @@ public class ComponentPanel extends JPanel {
         btnSave.setText("Add Component");
         txtName.setText("");
         txtUnit.setText("pcs");
-        txtCost.setText("");
         spnComponentReorder.setValue(10);
-        lblStockTitle.setText("Add Stock (select a component in the table first)");
-        updateStockFields();
     }
 
     private void saveComponent() {
         String name = txtName.getText().trim();
         String unit = txtUnit.getText().trim();
-        BigDecimal cost = parseMoney(txtCost.getText());
 
         if (categories.isEmpty()) {
             showMessage(lblMessage, "Add a component category first (Category tab).", true);
@@ -395,10 +326,6 @@ public class ComponentPanel extends JPanel {
             showMessage(lblMessage, "Name must be 255 characters or less, and the unit 50 or less.", true);
             return;
         }
-        if (cost == null) {
-            showMessage(lblMessage, "Enter a valid cost.", true);
-            return;
-        }
 
         Category category = categories.get(cmbCategory.getSelectedIndex());
         int reorder = (Integer) spnComponentReorder.getValue();
@@ -407,13 +334,13 @@ public class ComponentPanel extends JPanel {
         try {
             Component component;
             if (isNew) {
-                component = new Component(category, name, unit, cost, reorder);
+                // component.cost is NOT NULL; the real cost lives on each stock batch (unit_cost)
+                component = new Component(category, name, unit, BigDecimal.ZERO, reorder);
             } else {
                 component = editing;
                 component.setCategory(category);
                 component.setName(name);
                 component.setUnitOfMeasure(unit);
-                component.setCost(cost);
                 component.setReorderLevel(reorder);
             }
             componentRepository.save(component);
@@ -426,90 +353,9 @@ public class ComponentPanel extends JPanel {
         }
     }
 
-    // Supplier is used once a component is selected. Expiry is only for perishable components.
-    private void updateStockFields() {
-        boolean perishable = editing != null
-                && editing.getCategory() != null
-                && editing.getCategory().isPerishable();
-
-        cmbSupplier.setEnabled(editing != null);
-        txtExpiry.setEnabled(perishable);
-        if (!perishable) {
-            txtExpiry.setText("");
-        }
-    }
-
-    private void addStock() {
-        if (editing == null) {
-            showMessage(lblStockMessage, "Select a component in the table first.", true);
-            return;
-        }
-
-        boolean perishable = editing.getCategory() != null && editing.getCategory().isPerishable();
-
-        if (suppliers.isEmpty()) {
-            showMessage(lblStockMessage, "Add a supplier first (Suppliers screen).", true);
-            return;
-        }
-        Supplier supplier = suppliers.get(cmbSupplier.getSelectedIndex());
-
-        BigDecimal cost = parseMoney(txtBatchCost.getText());
-        if (cost == null) {
-            showMessage(lblStockMessage, "Enter a valid unit cost.", true);
-            return;
-        }
-
-        LocalDate received;
-        LocalDate expiry = null;
-        try {
-            received = LocalDate.parse(txtReceived.getText().trim());
-            if (perishable) {
-                if (txtExpiry.getText().trim().isEmpty()) {
-                    showMessage(lblStockMessage, "Expiry date is required for perishable items.", true);
-                    return;
-                }
-                expiry = LocalDate.parse(txtExpiry.getText().trim());
-            }
-        } catch (DateTimeParseException ex) {
-            showMessage(lblStockMessage, "Dates must look like 2026-10-31.", true);
-            return;
-        }
-        if (expiry != null && expiry.isBefore(received)) {
-            showMessage(lblStockMessage, "Expiry date cannot be before the date received.", true);
-            return;
-        }
-
-        int qty = (Integer) spnQty.getValue();
-        int reorder = (Integer) spnBatchReorder.getValue();
-
-        try {
-            componentInventoryRepository.save(new ComponentInventory(
-                    supplier, editing, qty, reorder, cost, received, expiry));
-
-            spnQty.setValue(1);
-            txtBatchCost.setText("");
-            txtReceived.setText(LocalDate.now().toString());
-            txtExpiry.setText("");
-            loadData();
-            showMessage(lblStockMessage, "Stock added.", false);
-        } catch (Exception ex) {
-            showMessage(lblStockMessage, "Not saved: " + ex.getMessage(), true);
-        }
-    }
-
     // Shows a message inside the panel (red = problem, green = success)
     private void showMessage(JLabel label, String text, boolean isError) {
         label.setForeground(isError ? new Color(220, 53, 69) : new Color(40, 167, 69));
         label.setText(text);
-    }
-
-    // Returns the amount, or null if it is not a valid number (or is negative)
-    private BigDecimal parseMoney(String text) {
-        try {
-            BigDecimal value = new BigDecimal(text.replace(",", "").trim());
-            return value.compareTo(BigDecimal.ZERO) < 0 ? null : value;
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 }

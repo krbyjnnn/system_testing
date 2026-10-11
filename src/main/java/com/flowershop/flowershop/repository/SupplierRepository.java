@@ -7,4 +7,7 @@ import java.util.List;
 public interface SupplierRepository extends JpaRepository<Supplier, Long> {
     
     List<Supplier> findBySupplierNameContainingIgnoreCase(String supplierName);
+
+    // Dropdowns for receiving stock only list active suppliers
+    List<Supplier> findByStatus(String status);
 }

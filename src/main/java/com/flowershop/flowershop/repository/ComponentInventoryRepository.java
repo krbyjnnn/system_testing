@@ -5,6 +5,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -12,6 +13,16 @@ public interface ComponentInventoryRepository extends JpaRepository<ComponentInv
 
     List<ComponentInventory> findByComponentComponentId(Long componentId);
     List<ComponentInventory> findBySupplierSupplierId(Long supplierId);
+
+    // Every delivery item from all suppliers (walk-ins included), newest first
+    @Query("SELECT ci FROM ComponentInventory ci JOIN ci.sdelivery sd "
+            + "ORDER BY ci.dateReceived DESC, ci.cbatchId DESC")
+    List<ComponentInventory> findAllDelivered();
+
+    // Everything a supplier delivered (through its deliveries), newest first
+    @Query("SELECT ci FROM ComponentInventory ci WHERE ci.sdelivery.supplier.supplierId = :supplierId "
+            + "ORDER BY ci.dateReceived DESC, ci.cbatchId DESC")
+    List<ComponentInventory> findDeliveredBySupplier(@Param("supplierId") Long supplierId);
 
     @Query(value = """
             SELECT * FROM (

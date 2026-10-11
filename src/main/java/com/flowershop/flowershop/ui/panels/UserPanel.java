@@ -2,6 +2,9 @@ package com.flowershop.flowershop.ui.panels;
 
 import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.UserRepository;
+import com.flowershop.flowershop.service.AuditService;
+import com.flowershop.flowershop.service.VoidService;
+import com.flowershop.flowershop.ui.SpringContext;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -16,12 +19,14 @@ public class UserPanel extends JPanel {
 
     private final User currentUser;
     private final UserRepository userRepository;
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     private JTextField txtSearch;
     private JTable userTable;
     private DefaultTableModel tableModel;
     private JLabel lblSummary;
     private JButton btnToggleStatus;
+    private JButton btnSetPasskey;
 
     // Form fields
     private JLabel lblFormTitle;
@@ -142,6 +147,7 @@ public class UserPanel extends JPanel {
                 startEditing(shownUsers.get(row));
             } else {
                 btnToggleStatus.setEnabled(false);
+                btnSetPasskey.setEnabled(false);
             }
         });
 
@@ -159,8 +165,13 @@ public class UserPanel extends JPanel {
         btnToggleStatus.setEnabled(false);
         btnToggleStatus.addActionListener(e -> toggleStatus());
 
+        btnSetPasskey = new JButton("Set Void Passkey");
+        btnSetPasskey.setEnabled(false);
+        btnSetPasskey.addActionListener(e -> setVoidPasskey());
+
         JPanel actionPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         actionPanel.setOpaque(false);
+        actionPanel.add(btnSetPasskey);
         actionPanel.add(btnToggleStatus);
 
         JPanel bottomPanel = new JPanel(new BorderLayout());
@@ -223,6 +234,7 @@ public class UserPanel extends JPanel {
 
         btnToggleStatus.setText(user.getStatus().equals("ACTIVE") ? "Set Inactive" : "Set Active");
         btnToggleStatus.setEnabled(true);
+        btnSetPasskey.setEnabled("MANAGER".equals(user.getRole()));
     }
 
     // Add mode: empty the form
@@ -239,6 +251,46 @@ public class UserPanel extends JPanel {
 
         btnToggleStatus.setText("Set Inactive");
         btnToggleStatus.setEnabled(false);
+        btnSetPasskey.setEnabled(false);
+    }
+
+    private void setVoidPasskey() {
+        int row = userTable.getSelectedRow();
+        if (row < 0 || row >= shownUsers.size()) {
+            return;
+        }
+        User user = shownUsers.get(row);
+
+        JPasswordField txtPasskey = new JPasswordField(12);
+        JPasswordField txtConfirm = new JPasswordField(12);
+        JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
+        form.add(new JLabel("Void passkey for " + user.getFullName() + " (4 to 8 digits)"));
+        form.add(new JLabel("Passkey"));
+        form.add(txtPasskey);
+        form.add(new JLabel("Confirm passkey"));
+        form.add(txtConfirm);
+
+        int choice = JOptionPane.showConfirmDialog(this, form, "Set Void Passkey",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        String passkey = new String(txtPasskey.getPassword());
+        String confirm = new String(txtConfirm.getPassword());
+        if (!passkey.equals(confirm)) {
+            JOptionPane.showMessageDialog(this, "The two passkeys do not match.", "Warning", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        try {
+            SpringContext.getBean(VoidService.class).setPasskey(currentUser, user, passkey);
+            JOptionPane.showMessageDialog(this, "Void passkey saved for " + user.getUsername() + ".", "Saved", JOptionPane.INFORMATION_MESSAGE);
+            loadData();
+            clearForm();
+        } catch (IllegalArgumentException | SecurityException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Warning", JOptionPane.WARNING_MESSAGE);
+        }
     }
 
     // Switches the selected user between ACTIVE and INACTIVE
@@ -261,6 +313,8 @@ public class UserPanel extends JPanel {
 
         try {
             userRepository.save(user);
+            auditService.log(currentUser, isActive ? "User deactivated" : "User activated", "USERS",
+                    user.getUsername() + " (" + user.getRole() + ")");
             loadData();
             clearForm();
         } catch (Exception ex) {
@@ -304,10 +358,24 @@ public class UserPanel extends JPanel {
         if (!password.isEmpty()) {
             user.setPasswordHash(password);
         }
-        user.setRole((String) cmbRole.getSelectedItem());
+        String oldRole = user.getRole();
+        String newRole = (String) cmbRole.getSelectedItem();
+        user.setRole(newRole);
 
         try {
             userRepository.save(user);
+            if (isNew) {
+                auditService.log(currentUser, "User created", "USERS", username + ", role " + newRole);
+            } else {
+                auditService.log(currentUser, "User edited", "USERS", username);
+                if (!newRole.equals(oldRole)) {
+                    auditService.log(currentUser, "Role changed", "USERS",
+                            username + ": " + oldRole + " to " + newRole);
+                }
+                if (!password.isEmpty()) {
+                    auditService.log(currentUser, "Password changed", "USERS", username);
+                }
+            }
             loadData();
             clearForm();
         } catch (Exception ex) {

@@ -1,12 +1,19 @@
 package com.flowershop.flowershop.ui.panels;
 
+import com.flowershop.flowershop.model.Delivery;
+import com.flowershop.flowershop.model.Order;
 import com.flowershop.flowershop.model.Product;
 import com.flowershop.flowershop.model.ProductInventory;
 import com.flowershop.flowershop.model.User;
+import com.flowershop.flowershop.repository.DeliveryRepository;
+import com.flowershop.flowershop.repository.OrderRepository;
 import com.flowershop.flowershop.repository.ProductInventoryRepository;
 import com.flowershop.flowershop.repository.ProductRepository;
 import com.flowershop.flowershop.service.SaleService;
+import com.flowershop.flowershop.service.VoidService;
+import com.flowershop.flowershop.ui.SpringContext;
 import com.flowershop.flowershop.util.ImageHelper;
+import com.flowershop.flowershop.util.InputRules;
 
 import javax.swing.*;
 import javax.swing.event.DocumentEvent;
@@ -20,6 +27,7 @@ import java.awt.event.MouseEvent;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -54,15 +62,16 @@ public class POSPanel extends JPanel {
     private JTable cartTable;
     private DefaultTableModel cartModel;
     private JLabel lblTotal;
+    private JLabel lblDown;
+    private JLabel lblBalance;
     private JComboBox<String> cmbMethod;
     private JTextField txtAmount;
     private JTextField txtReference;
     private JLabel lblReference;
 
-    // Order type, payment timing and pick-up / delivery details
+    // Order type and pick-up / delivery details
     private JPanel formPanel;
     private JComboBox<String> cmbType;
-    private JComboBox<String> cmbTiming;
     private JTextField txtName;
     private JTextField txtPhone;
     private JTextField txtAddress;
@@ -72,7 +81,7 @@ public class POSPanel extends JPanel {
     private JLabel lblDate;
     // Form rows, kept so they can be shown or hidden depending on the order type
     private JPanel rowName, rowPhone, rowAddress, rowDate, rowFee, rowNotes;
-    private JPanel rowMethod, rowAmount, rowReference;
+    private JPanel rowDown, rowBalance;
 
     // Total stock per product id
     private Map<Long, Integer> stock = new HashMap<>();
@@ -177,17 +186,26 @@ public class POSPanel extends JPanel {
         JPanel bottomPanel = new JPanel(new BorderLayout(0, 10));
         bottomPanel.setOpaque(false);
 
-        JButton btnRemove = new JButton("Remove Selected");
-        btnRemove.addActionListener(e -> removeFromCart());
+        JButton btnRemove = new JButton("Void Item");
+        btnRemove.setToolTipText("Needs the void passkey of a Manager");
+        btnRemove.addActionListener(e -> voidSelectedItem());
         JPanel removePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         removePanel.setOpaque(false);
         removePanel.add(btnRemove);
 
+        JButton btnPending = new JButton("Pending Orders");
+        btnPending.addActionListener(e -> openPendingOrders());
+        removePanel.add(Box.createHorizontalStrut(8));
+        removePanel.add(btnPending);
+
         // ---- Form fields ----
         lblTotal = new JLabel("₱0.00");
         lblTotal.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        lblDown = new JLabel("₱0.00");
+        lblDown.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        lblBalance = new JLabel("₱0.00");
+        lblBalance.setFont(new Font("Segoe UI", Font.PLAIN, 14));
         cmbType = new JComboBox<>(TYPE_LABELS);
-        cmbTiming = new JComboBox<>(new String[]{"Pay Now", "Pay Later"});
         cmbMethod = new JComboBox<>(new String[]{"Cash", "GCash", "Card"});
         txtAmount = new JTextField();
         txtReference = new JTextField();
@@ -198,6 +216,9 @@ public class POSPanel extends JPanel {
         txtAddress = new JTextField();
         txtFee = new JTextField();
         txtNotes = new JTextField();
+        InputRules.decimalOnly(txtAmount);
+        InputRules.digitsOnly(txtPhone, 11);
+        InputRules.decimalOnly(txtFee);
         lblDate = new JLabel("Date:");
         // Date picker: today or later (the time part is ignored)
         Date todayStart = Date.from(LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant());
@@ -211,9 +232,8 @@ public class POSPanel extends JPanel {
         rowDate = formRow(lblDate, spnDate);
         rowFee = formRow(new JLabel("Delivery Fee:"), txtFee);
         rowNotes = formRow(new JLabel("Notes:"), txtNotes);
-        rowMethod = formRow(new JLabel("Payment Method:"), cmbMethod);
-        rowAmount = formRow(new JLabel("Amount Received:"), txtAmount);
-        rowReference = formRow(lblReference, txtReference);
+        rowDown = formRow(new JLabel("Down Payment (30%):"), lblDown);
+        rowBalance = formRow(new JLabel("Balance:"), lblBalance);
 
         formPanel = new JPanel();
         formPanel.setLayout(new BoxLayout(formPanel, BoxLayout.Y_AXIS));
@@ -226,10 +246,11 @@ public class POSPanel extends JPanel {
         formPanel.add(rowFee);
         formPanel.add(rowNotes);
         formPanel.add(formRow(new JLabel("Total:"), lblTotal));
-        formPanel.add(formRow(new JLabel("Payment:"), cmbTiming));
-        formPanel.add(rowMethod);
-        formPanel.add(rowAmount);
-        formPanel.add(rowReference);
+        formPanel.add(rowDown);
+        formPanel.add(rowBalance);
+        formPanel.add(formRow(new JLabel("Payment Method:"), cmbMethod));
+        formPanel.add(formRow(new JLabel("Amount Received:"), txtAmount));
+        formPanel.add(formRow(lblReference, txtReference));
 
         // Scrolls when the delivery fields make the form taller than the space available
         JScrollPane formScroll = new JScrollPane(formPanel);
@@ -239,8 +260,7 @@ public class POSPanel extends JPanel {
         formScroll.setPreferredSize(new Dimension(100, 250));
         formScroll.getVerticalScrollBar().setUnitIncrement(16);
 
-        cmbType.addActionListener(e -> onTypeChanged());
-        cmbTiming.addActionListener(e -> updateFormVisibility());
+        cmbType.addActionListener(e -> updateFormVisibility());
         cmbMethod.addActionListener(e -> updateReferenceField());
         // The delivery fee is part of the total, so keep the total label in sync while typing
         txtFee.getDocument().addDocumentListener(new DocumentListener() {
@@ -458,14 +478,45 @@ public class POSPanel extends JPanel {
         refreshCart();
     }
 
-    private void removeFromCart() {
+    // Voiding takes a line out of the cart. Like a cashier system, it needs a supervisor:
+    // a Manager enters their void passkey, and the void is written to the audit trail.
+    private void voidSelectedItem() {
         int row = cartTable.getSelectedRow();
-        if (row < 0) {
+        if (row < 0 || row >= cartProducts.size()) {
+            warn("Select the item in the cart that you want to void.");
             return;
         }
-        cartProducts.remove(row);
-        cartQuantities.remove(row);
-        refreshCart();
+
+        Product product = cartProducts.get(row);
+        int qty = cartQuantities.get(row);
+        BigDecimal amount = product.getSellingPrice().multiply(BigDecimal.valueOf(qty));
+
+        JPasswordField txtApproverPassword = new JPasswordField(16);
+        JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
+        form.add(new JLabel("Void: " + product.getProductName() + " x" + qty + "  (" + String.format("₱%,.2f", amount) + ")"));
+        form.add(new JLabel("A Manager must approve this void."));
+        form.add(new JLabel("Manager passkey"));
+        form.add(txtApproverPassword);
+
+        int choice = JOptionPane.showConfirmDialog(this, form, "Void Approval",
+                JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (choice != JOptionPane.OK_OPTION) {
+            return;
+        }
+
+        VoidService voidService = SpringContext.getBean(VoidService.class);
+        try {
+            User approver = voidService.authorize(currentUser, new String(txtApproverPassword.getPassword()));
+            voidService.logVoid(currentUser, approver, product.getProductName(), qty, amount);
+
+            cartProducts.remove(row);
+            cartQuantities.remove(row);
+            refreshCart();
+        } catch (IllegalArgumentException | SecurityException ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Void Denied", JOptionPane.ERROR_MESSAGE);
+        } finally {
+            txtApproverPassword.setText("");
+        }
     }
 
     private void refreshCart() {
@@ -524,28 +575,23 @@ public class POSPanel extends JPanel {
         }
     }
 
-    // Total the customer pays: items + delivery fee
+    // Total the customer pays: items + delivery fee, plus the 30% down payment and the balance
     private void updateTotal() {
-        lblTotal.setText(peso(itemsTotal().add(feeForTotal())));
+        BigDecimal total = itemsTotal().add(feeForTotal());
+        BigDecimal down = SaleService.downPaymentOf(total);
+        lblTotal.setText(peso(total));
+        lblDown.setText(peso(down));
+        lblBalance.setText(peso(total.subtract(down)));
     }
 
     private LocalDate selectedDate() {
         return ((Date) spnDate.getValue()).toInstant().atZone(ZoneId.systemDefault()).toLocalDate();
     }
 
-    // Walk-in is always paid right away, so the Pay Later option is only for pick-up and delivery
-    private void onTypeChanged() {
-        if (isWalkIn()) {
-            cmbTiming.setSelectedItem("Pay Now");
-        }
-        updateFormVisibility();
-    }
-
-    // Shows only the fields that apply to the chosen order type and payment timing
+    // Shows only the fields that apply to the chosen order type
     private void updateFormVisibility() {
         boolean walkIn = isWalkIn();
         boolean delivery = "DELIVERY".equals(orderType());
-        boolean payNow = "Pay Now".equals(cmbTiming.getSelectedItem());
 
         rowName.setVisible(!walkIn);
         rowPhone.setVisible(!walkIn);
@@ -553,13 +599,9 @@ public class POSPanel extends JPanel {
         rowNotes.setVisible(!walkIn);
         rowAddress.setVisible(delivery);
         rowFee.setVisible(delivery);
+        rowDown.setVisible(!walkIn);
+        rowBalance.setVisible(!walkIn);
         lblDate.setText(delivery ? "Delivery Date:" : "Pick-up Date:");
-
-        cmbTiming.setEnabled(!walkIn);
-        // Nothing is collected now when paying later
-        rowMethod.setVisible(payNow);
-        rowAmount.setVisible(payNow);
-        rowReference.setVisible(payNow);
 
         updateTotal();
         formPanel.revalidate();
@@ -592,7 +634,6 @@ public class POSPanel extends JPanel {
         txtFee.setText("");
         txtNotes.setText("");
         spnDate.setValue(new Date());
-        cmbTiming.setSelectedItem("Pay Now");
         cmbType.setSelectedIndex(0);
         refreshCart();
     }
@@ -606,7 +647,6 @@ public class POSPanel extends JPanel {
         String orderType = orderType();
         boolean walkIn = isWalkIn();
         boolean delivery = "DELIVERY".equals(orderType);
-        boolean payNow = "Pay Now".equals(cmbTiming.getSelectedItem());
 
         // Pick-up and delivery need contact details (and an address for delivery)
         SaleService.DeliveryDetails details = null;
@@ -647,40 +687,41 @@ public class POSPanel extends JPanel {
         }
 
         BigDecimal total = itemsTotal().add(fee);
+        // Walk-in pays everything now; pick-up and delivery pay the 30% down payment now
+        BigDecimal dueNow = walkIn ? total : SaleService.downPaymentOf(total);
         String method = (String) cmbMethod.getSelectedItem();
         String reference = txtReference.getText().trim();
-        BigDecimal received = total;
 
-        // Payment is only checked when money is collected now
-        if (payNow) {
-            try {
-                received = new BigDecimal(txtAmount.getText().replace(",", "").trim());
-            } catch (NumberFormatException e) {
-                warn("Enter a valid amount received.");
-                return;
-            }
-            if (received.compareTo(total) < 0) {
-                warn("Amount received is less than the total.");
-                return;
-            }
-            if (!method.equals("Cash") && reference.isEmpty()) {
-                warn("Enter the reference number for " + method + ".");
-                return;
-            }
+        BigDecimal received;
+        try {
+            received = new BigDecimal(txtAmount.getText().replace(",", "").trim());
+        } catch (NumberFormatException e) {
+            warn("Enter a valid amount received.");
+            return;
+        }
+        if (received.compareTo(dueNow) < 0) {
+            warn(walkIn ? "Amount received is less than the total."
+                    : "Amount received is less than the down payment of " + peso(dueNow) + ".");
+            return;
+        }
+        if (!method.equals("Cash") && reference.isEmpty()) {
+            warn("Enter the reference number for " + method + ".");
+            return;
         }
 
         try {
             String transactionNumber = saleService.completeSale(
-                    currentUser, cartProducts, cartQuantities, orderType, payNow, method, reference, details);
+                    currentUser, cartProducts, cartQuantities, orderType, method, reference, details);
 
             String message = "Sale completed!\n"
                     + "Transaction: " + transactionNumber + "\n"
                     + "Total: " + peso(total);
-            if (payNow) {
-                message += "\nChange: " + peso(received.subtract(total));
-            } else {
-                message += "\nPayment: to be collected on " + (delivery ? "delivery" : "pick-up");
+            if (!walkIn) {
+                message += "\nDown payment: " + peso(dueNow)
+                        + "\nBalance: " + peso(total.subtract(dueNow))
+                        + " (to be paid on " + (delivery ? "delivery" : "pick-up") + ")";
             }
+            message += "\nChange: " + peso(received.subtract(dueNow));
             JOptionPane.showMessageDialog(this, message, "Success", JOptionPane.INFORMATION_MESSAGE);
 
             resetForm();
@@ -688,6 +729,155 @@ public class POSPanel extends JPanel {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Sale was not saved: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
             loadProducts();
+        }
+    }
+
+    private void openPendingOrders() {
+        DefaultTableModel model = new DefaultTableModel(
+                new String[]{"Transaction No.", "Date & Time", "Type", "Total", "Paid", "Balance",
+                        "Name", "Phone", "Address", "Date", "Notes"}, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        JTable table = new JTable(model);
+        table.setRowHeight(28);
+        List<Order> pending = new ArrayList<>();
+        List<BigDecimal> balances = new ArrayList<>();
+
+        JComboBox<String> pendingMethod = new JComboBox<>(new String[]{"Cash", "GCash", "Card"});
+        JTextField pendingAmount = new JTextField();
+        InputRules.decimalOnly(pendingAmount);
+        JTextField pendingReference = new JTextField();
+        JLabel pendingRefLabel = new JLabel("Reference No. (GCash/Card):");
+        JLabel pendingBalance = new JLabel("₱0.00");
+        pendingBalance.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        pendingReference.setEnabled(false);
+        pendingRefLabel.setEnabled(false);
+
+        pendingMethod.addActionListener(e -> {
+            boolean needsReference = !"Cash".equals(pendingMethod.getSelectedItem());
+            pendingReference.setEnabled(needsReference);
+            pendingRefLabel.setEnabled(needsReference);
+            if (!needsReference) {
+                pendingReference.setText("");
+            }
+        });
+
+        table.getSelectionModel().addListSelectionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row >= 0 && row < balances.size()) {
+                pendingBalance.setText(peso(balances.get(row)));
+            } else {
+                pendingBalance.setText("₱0.00");
+            }
+        });
+
+        loadPending(model, pending, balances);
+
+        JPanel form = new JPanel(new GridLayout(0, 2, 8, 6));
+        form.add(new JLabel("Balance Due:"));
+        form.add(pendingBalance);
+        form.add(new JLabel("Payment Method:"));
+        form.add(pendingMethod);
+        form.add(new JLabel("Amount Received:"));
+        form.add(pendingAmount);
+        form.add(pendingRefLabel);
+        form.add(pendingReference);
+
+        JButton btnComplete = new JButton("Collect Balance & Complete");
+        btnComplete.setFont(new Font("Segoe UI", Font.BOLD, 14));
+        btnComplete.setBackground(new Color(40, 167, 69));
+        btnComplete.setForeground(Color.WHITE);
+        btnComplete.addActionListener(e -> {
+            int row = table.getSelectedRow();
+            if (row < 0) {
+                warn("Select an order first.");
+                return;
+            }
+            boolean done = completePending(pending.get(row), balances.get(row),
+                    (String) pendingMethod.getSelectedItem(), pendingAmount.getText(), pendingReference.getText().trim());
+            if (done) {
+                pendingAmount.setText("");
+                pendingReference.setText("");
+                pendingMethod.setSelectedIndex(0);
+                loadPending(model, pending, balances);
+                pendingBalance.setText("₱0.00");
+            }
+        });
+
+        JPanel bottom = new JPanel(new BorderLayout(0, 10));
+        bottom.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
+        bottom.add(form, BorderLayout.NORTH);
+        bottom.add(btnComplete, BorderLayout.SOUTH);
+
+        JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), "Pending Orders", Dialog.ModalityType.APPLICATION_MODAL);
+        dialog.setLayout(new BorderLayout(0, 10));
+        dialog.add(new JScrollPane(table), BorderLayout.CENTER);
+        dialog.add(bottom, BorderLayout.SOUTH);
+        dialog.setSize(1300, 560);
+        dialog.setLocationRelativeTo(this);
+        dialog.setVisible(true);
+    }
+
+    private void loadPending(DefaultTableModel model, List<Order> pending, List<BigDecimal> balances) {
+        pending.clear();
+        balances.clear();
+        pending.addAll(SpringContext.getBean(OrderRepository.class).findByOrderStatus("PENDING"));
+        DeliveryRepository deliveryRepository = SpringContext.getBean(DeliveryRepository.class);
+        model.setRowCount(0);
+        for (Order o : pending) {
+            BigDecimal balance = saleService.balanceDue(o);
+            balances.add(balance);
+
+            List<Delivery> deliveries = deliveryRepository.findByOrderOrderId(o.getOrderId());
+            Delivery d = deliveries.isEmpty() ? null : deliveries.get(0);
+            model.addRow(new Object[]{
+                    o.getTransactionNumber(),
+                    o.getOrderDate().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")),
+                    o.getOrderType(),
+                    peso(o.getTotalAmount()),
+                    peso(o.getTotalAmount().subtract(balance)),
+                    peso(balance),
+                    d != null ? d.getRecipientName() : "",
+                    d != null ? d.getRecipientPhone() : "",
+                    d != null ? d.getDeliveryAddress() : "",
+                    d != null ? d.getDeliveryDate() : "",
+                    d != null && d.getNotes() != null ? d.getNotes() : ""
+            });
+        }
+    }
+
+    private boolean completePending(Order order, BigDecimal balance, String method, String amountText, String reference) {
+        BigDecimal received;
+        try {
+            received = new BigDecimal(amountText.replace(",", "").trim());
+        } catch (NumberFormatException e) {
+            warn("Enter a valid amount received.");
+            return false;
+        }
+        if (received.compareTo(balance) < 0) {
+            warn("Amount received is less than the balance of " + peso(balance) + ".");
+            return false;
+        }
+        if (!method.equals("Cash") && reference.isEmpty()) {
+            warn("Enter the reference number for " + method + ".");
+            return false;
+        }
+
+        try {
+            saleService.completePendingOrder(currentUser, order.getOrderId(), method, reference);
+            JOptionPane.showMessageDialog(this,
+                    "Order " + order.getTransactionNumber() + " completed.\n"
+                            + "Total: " + peso(order.getTotalAmount()) + "\n"
+                            + "Balance paid: " + peso(balance) + "\n"
+                            + "Change: " + peso(received.subtract(balance)),
+                    "Success", JOptionPane.INFORMATION_MESSAGE);
+            return true;
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Order was not updated: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+            return false;
         }
     }
 

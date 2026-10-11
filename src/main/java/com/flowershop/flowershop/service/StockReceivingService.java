@@ -7,6 +7,7 @@ import com.flowershop.flowershop.model.Procurement;
 import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.ComponentInventoryRepository;
 import com.flowershop.flowershop.repository.ProcurementRepository;
+import com.flowershop.flowershop.util.Permissions;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -32,6 +33,12 @@ public class StockReceivingService {
                                       String receiptNumber, String paymentMethod,
                                       Component component, int quantity, int reorderLevel,
                                       BigDecimal unitCost, LocalDate expiryDate) {
+
+        // Receiving stock is for the people who manage suppliers or inventory, never view-only Staff
+        if (!Permissions.can(receivedBy, Permissions.Feature.INVENTORY_EDIT)
+                && !Permissions.can(receivedBy, Permissions.Feature.SUPPLIERS)) {
+            throw new SecurityException("This account is not allowed to receive stock.");
+        }
 
         String receipt = (receiptNumber == null || receiptNumber.trim().isEmpty()) ? null : receiptNumber.trim();
 

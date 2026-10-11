@@ -1,6 +1,7 @@
 package com.flowershop.flowershop.ui;
 
 import com.flowershop.flowershop.repository.UserRepository;
+import com.flowershop.flowershop.service.AuditService;
 
 import javax.swing.*;
 import java.awt.*;
@@ -77,8 +78,12 @@ public class LoginFrame extends JFrame {
             return;
         }
 
+        AuditService auditService = SpringContext.getBean(AuditService.class);
+
         userRepository.findByUsername(username).ifPresentOrElse(user -> {
             if (user.getPasswordHash().equals(password)) {
+                auditService.log(user, "Login", "AUTH", username + " logged in");
+
                 JOptionPane.showMessageDialog(this, "Welcome, " + user.getFullName() + " [" + user.getRole() + "]", "Login Successful", JOptionPane.INFORMATION_MESSAGE);
                 
                 // 1. Close the login window safely
@@ -91,9 +96,11 @@ public class LoginFrame extends JFrame {
                 });
 
             } else {
+                auditService.log(user, "Failed login", "AUTH", "Wrong password for " + username);
                 JOptionPane.showMessageDialog(this, "Invalid password.", "Error", JOptionPane.ERROR_MESSAGE);
             }
         }, () -> {
+            auditService.log(null, "Failed login", "AUTH", "Unknown username: " + username);
             JOptionPane.showMessageDialog(this, "User not found.", "Error", JOptionPane.ERROR_MESSAGE);
     });
 }

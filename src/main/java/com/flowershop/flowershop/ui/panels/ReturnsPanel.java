@@ -4,9 +4,13 @@ import com.flowershop.flowershop.model.Dispute;
 import com.flowershop.flowershop.model.Order;
 import com.flowershop.flowershop.model.OrderItem;
 import com.flowershop.flowershop.model.Returns;
+import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.DisputeRepository;
 import com.flowershop.flowershop.repository.OrderItemRepository;
 import com.flowershop.flowershop.repository.ReturnsRepository;
+import com.flowershop.flowershop.service.AuditService;
+import com.flowershop.flowershop.ui.SpringContext;
+import com.flowershop.flowershop.util.InputRules;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -22,9 +26,11 @@ public class ReturnsPanel extends JPanel {
     private static final String RETURNED = "Returned";
     private static final String FAILED = "Failed to Return";
 
+    private final User currentUser;
     private final ReturnsRepository returnsRepository;
     private final DisputeRepository disputeRepository;
     private final OrderItemRepository orderItemRepository;
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     private JTable disputeTable;
     private DefaultTableModel disputeModel;
@@ -52,10 +58,12 @@ public class ReturnsPanel extends JPanel {
     private List<Integer> formRemaining = new ArrayList<>();
 
     public ReturnsPanel(
+            User currentUser,
             ReturnsRepository returnsRepository,
             DisputeRepository disputeRepository,
             OrderItemRepository orderItemRepository
     ) {
+        this.currentUser = currentUser;
         this.returnsRepository = returnsRepository;
         this.disputeRepository = disputeRepository;
         this.orderItemRepository = orderItemRepository;
@@ -162,6 +170,7 @@ public class ReturnsPanel extends JPanel {
         cmbItem = new JComboBox<>();
         spnQty = new JSpinner(new SpinnerNumberModel(1, 1, 999, 1));
         txtRefund = new JTextField();
+        InputRules.decimalOnly(txtRefund);
 
         cmbItem.addActionListener(e -> onItemChanged());
         spnQty.addChangeListener(e -> fillRefund());
@@ -464,7 +473,11 @@ public class ReturnsPanel extends JPanel {
         newReturn.setDispute(selectedDispute);
 
         try {
-            returnsRepository.save(newReturn);
+            Returns saved = returnsRepository.save(newReturn);
+            auditService.log(currentUser, "Return created", "RETURNS",
+                    "Return #" + saved.getReturnId() + " for " + orderLabel(saved.getOrder())
+                            + ", " + item.getProduct().getProductName() + " x" + qty
+                            + ", refund " + peso(refund) + ", dispute #" + selectedDispute.getDisputeId());
             loadData();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Return was not saved: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -508,6 +521,10 @@ public class ReturnsPanel extends JPanel {
         r.setStatus(newStatus);
         try {
             returnsRepository.save(r);
+            String action = RETURNED.equals(newStatus) ? "Return approved, refund issued" : "Return rejected";
+            auditService.log(currentUser, action, "RETURNS",
+                    "Return #" + r.getReturnId() + " for " + orderLabel(r.getOrder())
+                            + ", status " + TO_RETURN + " to " + newStatus + ", refund " + peso(r.getRefundAmount()));
             loadData();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Status was not changed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);

@@ -26,6 +26,9 @@ public class User {
     @Column(name = "status", nullable = false, length = 50)
     private String status = "ACTIVE";
 
+    @Column(name = "void_passkey", length = 255)
+    private String voidPasskey;
+
     public User() {
 
     }
@@ -82,5 +85,13 @@ public class User {
 
     public void setStatus(String status) {
         this.status = status;
+    }
+
+    public String getVoidPasskey() {
+        return voidPasskey;
+    }
+
+    public void setVoidPasskey(String voidPasskey) {
+        this.voidPasskey = voidPasskey;
     }
 }

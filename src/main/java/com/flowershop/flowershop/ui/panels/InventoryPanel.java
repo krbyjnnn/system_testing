@@ -13,6 +13,7 @@ public class InventoryPanel extends JPanel {
     private final ProductPanel productPanel;
     private final ComponentPanel componentPanel;
     private final CategoryPanel categoryPanel;
+    private final boolean readOnly; // true for Staff: they can look but not change anything
 
     public InventoryPanel(
             ProductRepository productRepository,
@@ -24,14 +25,16 @@ public class InventoryPanel extends JPanel {
             RecipeRepository recipeRepository,
             ProductionService productionService,
             StockReceivingService stockReceivingService,
-            User currentUser
+            User currentUser,
+            boolean readOnly
     ) {
+        this.readOnly = readOnly;
         productPanel = new ProductPanel(productRepository, productInventoryRepository, categoryRepository,
                 supplierRepository, componentRepository, componentInventoryRepository, recipeRepository,
-                productionService);
+                productionService, currentUser, readOnly);
         componentPanel = new ComponentPanel(componentRepository, componentInventoryRepository, categoryRepository,
-                supplierRepository, stockReceivingService, currentUser);
-        categoryPanel = new CategoryPanel(categoryRepository);
+                supplierRepository, stockReceivingService, currentUser, readOnly);
+        categoryPanel = new CategoryPanel(categoryRepository, currentUser, readOnly);
 
         initUI();
     }
@@ -42,7 +45,7 @@ public class InventoryPanel extends JPanel {
         setBackground(new Color(245, 247, 250));
 
         // Top Header
-        JLabel lblTitle = new JLabel("Inventory");
+        JLabel lblTitle = new JLabel(readOnly ? "Inventory" : "Inventory");
         lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
         add(lblTitle, BorderLayout.NORTH);
 

@@ -7,9 +7,13 @@ import com.flowershop.flowershop.model.Product;
 import com.flowershop.flowershop.model.ProductInventory;
 import com.flowershop.flowershop.model.Recipe;
 import com.flowershop.flowershop.model.Supplier;
+import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.AuditService;
 import com.flowershop.flowershop.service.ProductionService;
+import com.flowershop.flowershop.ui.SpringContext;
 import com.flowershop.flowershop.util.ImageHelper;
+import com.flowershop.flowershop.util.InputRules;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -40,6 +44,9 @@ public class ProductPanel extends JPanel {
     private final ComponentInventoryRepository componentInventoryRepository;
     private final RecipeRepository recipeRepository;
     private final ProductionService productionService;
+    private final User currentUser;
+    private final boolean readOnly; // view only: the add/edit, recipe, stock and photo cards are not shown
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     // Table
     private JTextField txtSearch;
@@ -100,8 +107,11 @@ public class ProductPanel extends JPanel {
             ComponentRepository componentRepository,
             ComponentInventoryRepository componentInventoryRepository,
             RecipeRepository recipeRepository,
-            ProductionService productionService
+            ProductionService productionService,
+            User currentUser,
+            boolean readOnly
     ) {
+        this.readOnly = readOnly;
         this.productRepository = productRepository;
         this.productInventoryRepository = productInventoryRepository;
         this.categoryRepository = categoryRepository;
@@ -110,6 +120,7 @@ public class ProductPanel extends JPanel {
         this.componentInventoryRepository = componentInventoryRepository;
         this.recipeRepository = recipeRepository;
         this.productionService = productionService;
+        this.currentUser = currentUser;
 
         initUI();
         loadData();
@@ -130,6 +141,7 @@ public class ProductPanel extends JPanel {
         txtName = new JTextField();
         cmbCategory = new JComboBox<>();
         txtPrice = new JTextField();
+        InputRules.decimalOnly(txtPrice);
         cmbStatus = new JComboBox<>(new String[]{"ACTIVE", "INACTIVE"});
         chkComposite = new JCheckBox("Made from components");
 
@@ -246,6 +258,7 @@ public class ProductPanel extends JPanel {
         spnQty = new JSpinner(new SpinnerNumberModel(1, 1, 99999, 1));
         spnReorder = new JSpinner(new SpinnerNumberModel(5, 0, 99999, 1));
         txtCost = new JTextField();
+        InputRules.decimalOnly(txtCost);
 
         JPanel stockFields = new JPanel(new GridLayout(2, 6, 8, 2));
         stockFields.setOpaque(false);
@@ -367,7 +380,9 @@ public class ProductPanel extends JPanel {
         center.add(new JScrollPane(table), BorderLayout.CENTER);
         center.add(lblSummary, BorderLayout.SOUTH);
 
-        add(top, BorderLayout.NORTH);
+        if (!readOnly) {
+            add(top, BorderLayout.NORTH);
+        }
         add(center, BorderLayout.CENTER);
     }
 
@@ -670,6 +685,8 @@ public class ProductPanel extends JPanel {
         String status = (String) cmbStatus.getSelectedItem();
         boolean composite = chkComposite.isSelected();
         boolean isNew = editing == null;
+        BigDecimal oldPrice = isNew ? null : editing.getSellingPrice();
+        String oldStatus = isNew ? null : editing.getStatus();
 
         try {
             Product product;
@@ -686,6 +703,21 @@ public class ProductPanel extends JPanel {
             }
             // Stay on the saved product so its recipe or stock can be set up right away
             editing = productRepository.save(product);
+            if (isNew) {
+                auditService.log(currentUser, "Product created", "PRODUCTS",
+                        editing.getProductCode() + " " + name + ", price ₱" + price + ", status " + status);
+            } else {
+                auditService.log(currentUser, "Product edited", "PRODUCTS",
+                        editing.getProductCode() + " " + name);
+                if (oldPrice != null && oldPrice.compareTo(price) != 0) {
+                    auditService.log(currentUser, "Price changed", "PRODUCTS",
+                            editing.getProductCode() + " " + name + ": ₱" + oldPrice + " to ₱" + price);
+                }
+                if (oldStatus != null && !oldStatus.equals(status)) {
+                    auditService.log(currentUser, "ACTIVE".equals(status) ? "Product activated" : "Product deactivated", "PRODUCTS",
+                            editing.getProductCode() + " " + name);
+                }
+            }
 
             loadData();
             if (isNew && composite) {
@@ -806,6 +838,8 @@ public class ProductPanel extends JPanel {
                 line = new Recipe(editing, component, qty);
             }
             recipeRepository.save(line);
+            auditService.log(currentUser, "Recipe changed", "PRODUCTS",
+                    editing.getProductName() + ": " + (existed ? "updated " : "added ") + component.getName() + " x" + qty);
 
             spnRecipeQty.setValue(1);
             loadData();
@@ -823,7 +857,10 @@ public class ProductPanel extends JPanel {
         }
 
         try {
-            recipeRepository.delete(recipeLines.get(row));
+            Recipe removed = recipeLines.get(row);
+            recipeRepository.delete(removed);
+            auditService.log(currentUser, "Recipe changed", "PRODUCTS",
+                    editing.getProductName() + ": removed " + removed.getComponent().getName());
             loadData();
             showMessage(lblRecipeMessage, "Removed from the recipe.", false);
         } catch (Exception ex) {
@@ -842,6 +879,8 @@ public class ProductPanel extends JPanel {
         int qty = (Integer) spnMakeQty.getValue();
         try {
             productionService.makeProduct(editing, qty);
+            auditService.log(currentUser, "Product made", "INVENTORY",
+                    qty + " x " + editing.getProductName() + ", components deducted from stock");
 
             spnMakeQty.setValue(1);
             loadData();
@@ -873,6 +912,8 @@ public class ProductPanel extends JPanel {
         try {
             productInventoryRepository.save(new ProductInventory(
                     supplier, editing, qty, reorder, cost, LocalDate.now(), null));
+            auditService.log(currentUser, "Stock added", "INVENTORY",
+                    qty + " x " + editing.getProductName() + ", unit cost ₱" + cost + ", reorder level " + reorder);
 
             spnQty.setValue(1);
             txtCost.setText("");

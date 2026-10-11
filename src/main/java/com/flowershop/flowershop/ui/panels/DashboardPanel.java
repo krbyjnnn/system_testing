@@ -2,7 +2,6 @@ package com.flowershop.flowershop.ui.panels;
 
 import com.flowershop.flowershop.model.Dispute;
 import com.flowershop.flowershop.model.Order;
-import com.flowershop.flowershop.model.ProductInventory;
 import com.flowershop.flowershop.repository.ComponentInventoryRepository;
 import com.flowershop.flowershop.repository.DisputeRepository;
 import com.flowershop.flowershop.repository.OrderItemRepository;
@@ -12,15 +11,18 @@ import com.flowershop.flowershop.repository.ProductRepository;
 import com.flowershop.flowershop.repository.ReturnsRepository;
 import com.flowershop.flowershop.repository.SalesPoint;
 import com.flowershop.flowershop.ui.SpringContext;
+import com.flowershop.flowershop.util.PdfReport;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 
 import javax.swing.*;
 import javax.swing.border.Border;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.io.File;
 import java.math.BigDecimal;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -40,7 +42,7 @@ public class DashboardPanel extends JPanel {
 
     private static final int PREVIEW_SIZE = 10;   // rows shown in each dashboard preview
     private static final int DIALOG_SIZE = 15;    // rows per page in the "View all" dialog
-    private static final int LOW_STOCK_LIMIT = 5; // batches at or below this quantity are "low stock"
+    private static final int EXPORT_SIZE = 100;   // rows read per query when a table is exported to PDF
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final Color BORDER = new Color(220, 224, 230);
     private static final Color TEXT = new Color(40, 40, 40);
@@ -65,6 +67,9 @@ public class DashboardPanel extends JPanel {
     private final SalesChart salesChart = new SalesChart();
     private final List<PreviewSection> sections = new ArrayList<>();
     private String chartMode = "DAILY"; // DAILY, WEEKLY or MONTHLY (only affects the chart)
+    // The points currently drawn in the chart, kept so the PDF report can list the same figures
+    private List<String> chartLabels = new ArrayList<>();
+    private List<BigDecimal> chartValues = new ArrayList<>();
 
     public DashboardPanel(ProductRepository productRepository,
                           ProductInventoryRepository productInventoryRepository,
@@ -90,7 +95,16 @@ public class DashboardPanel extends JPanel {
 
         JLabel title = new JLabel("Executive Dashboard & Overview");
         title.setFont(font(Font.BOLD, 22));
-        add(title, BorderLayout.NORTH);
+        JButton btnExport = new JButton("Export PDF");
+        btnExport.setFont(font(Font.PLAIN, 12));
+        btnExport.setFocusPainted(false);
+        btnExport.addActionListener(e -> exportDashboard());
+
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.add(title, BorderLayout.WEST);
+        header.add(btnExport, BorderLayout.EAST);
+        add(header, BorderLayout.NORTH);
 
         // Three stacked rows: KPI cards, chart + side bars, preview tables
         JPanel center = new JPanel(new GridBagLayout());
@@ -234,7 +248,7 @@ public class DashboardPanel extends JPanel {
         // previewColumns = indexes of the columns shown in the small dashboard table;
         // the "View all" dialog shows every column.
         sections.add(new PreviewSection("Low Stock",
-                new String[]{"ID", "Product Name", "Category", "Quantity"}, new int[]{1, 3}, this::loadLowStock));
+                new String[]{"Type", "Item", "Category", "Quantity"}, new int[]{0, 1, 3}, this::loadLowStock));
         sections.add(new PreviewSection("Spoilage",
                 new String[]{"Type", "Item", "Quantity", "Expiry Date"}, new int[]{1, 3}, this::loadSpoilage));
         sections.add(new PreviewSection("Transactions",
@@ -306,6 +320,8 @@ public class DashboardPanel extends JPanel {
             labels.add(labelFormat.format(period));
             values.add(found.getOrDefault(period.toString(), BigDecimal.ZERO)); // key matches the repository's period string
         }
+        chartLabels = labels;
+        chartValues = values;
         salesChart.setData(labels, values);
     }
 
@@ -319,13 +335,9 @@ public class DashboardPanel extends JPanel {
     }
 
     private PageData loadLowStock(int page, int size) {
-        return toData(productInventoryRepository.findLowStockPage(LOW_STOCK_LIMIT, PageRequest.of(page, size)),
-                (ProductInventory i) -> new Object[]{
-                        i.getPbatchId(),
-                        i.getProduct() != null ? i.getProduct().getProductName() : "N/A",
-                        i.getProduct() != null && i.getProduct().getCategory() != null
-                                ? i.getProduct().getCategory().getName() : "N/A",
-                        i.getQuantityOnHand()});
+        return toData(componentInventoryRepository.findLowStock(PageRequest.of(page, size)),
+                i -> new Object[]{i.getItemType(), i.getItemName(),
+                        i.getCategoryName() != null ? i.getCategoryName() : "N/A", i.getQuantityOnHand()});
     }
 
     private PageData loadSpoilage(int page, int size) {
@@ -353,6 +365,111 @@ public class DashboardPanel extends JPanel {
                         d.getComplaint(),
                         d.getStatus(),
                         d.getDateFiled() != null ? d.getDateFiled().format(DATE_TIME) : ""});
+    }
+
+    // ------------------------------------------------------------------ PDF export
+
+    /** Whole dashboard: key figures, the sales shown in the chart, and every row of the four tables. */
+    private void exportDashboard() {
+        File file = chooseFile("Dashboard Report");
+        if (file == null) {
+            return;
+        }
+
+        try {
+            List<String[]> summary = List.of(
+                    new String[]{"Today's Sales", lblDailySales.getText()},
+                    new String[]{"Items Sold", lblItemsSold.getText()},
+                    new String[]{"Active Products", lblTotalProducts.getText()},
+                    new String[]{"Weekly Sales", lblWeeklySales.getText()},
+                    new String[]{"Monthly Sales", lblMonthlySales.getText()},
+                    new String[]{"Monthly Net Flow", lblNetFlow.getText()});
+
+            List<Object[]> salesRows = new ArrayList<>();
+            for (int i = 0; i < chartLabels.size(); i++) {
+                salesRows.add(new Object[]{chartLabels.get(i), money(chartValues.get(i))});
+            }
+            String period = chartMode.charAt(0) + chartMode.substring(1).toLowerCase();
+
+            List<PdfReport.Section> report = new ArrayList<>();
+            report.add(new PdfReport.Section("Sales (" + period + ")", new String[]{"Period", "Sales"}, salesRows));
+            for (PreviewSection section : sections) {
+                report.add(new PdfReport.Section(section.title, section.columns, loadAllRows(section.loader)));
+            }
+
+            PdfReport.write(file, "Dashboard Report", summary, report);
+            offerToOpen(file);
+        } catch (Exception ex) {
+            showExportError(ex);
+        }
+    }
+
+    /** One dashboard table with all of its rows, not just the ones shown in the small preview. */
+    private void exportSection(PreviewSection section) {
+        File file = chooseFile(section.title);
+        if (file == null) {
+            return;
+        }
+
+        try {
+            PdfReport.write(file, section.title, List.of(),
+                    List.of(new PdfReport.Section(null, section.columns, loadAllRows(section.loader))));
+            offerToOpen(file);
+        } catch (Exception ex) {
+            showExportError(ex);
+        }
+    }
+
+    /** Reads page after page until the table has no more rows. */
+    private List<Object[]> loadAllRows(PageLoader loader) {
+        List<Object[]> all = new ArrayList<>();
+        int page = 0;
+        int totalPages;
+        do {
+            PageData data = loader.load(page, EXPORT_SIZE);
+            all.addAll(data.rows);
+            totalPages = data.totalPages;
+            page++;
+        } while (page < totalPages);
+        return all;
+    }
+
+    /** Returns the file to write, or null when the user cancels or does not want to replace an existing file. */
+    private File chooseFile(String name) {
+        JFileChooser chooser = new JFileChooser();
+        chooser.setDialogTitle("Save PDF");
+        chooser.setFileFilter(new FileNameExtensionFilter("PDF files", "pdf"));
+        chooser.setSelectedFile(new File(name.replace(' ', '-') + "-" + LocalDate.now() + ".pdf"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+            return null;
+        }
+
+        File file = chooser.getSelectedFile();
+        if (!file.getName().toLowerCase().endsWith(".pdf")) {
+            file = new File(file.getParentFile(), file.getName() + ".pdf");
+        }
+        if (file.exists() && JOptionPane.showConfirmDialog(this, file.getName() + " already exists. Replace it?",
+                "Save PDF", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            return null;
+        }
+        return file;
+    }
+
+    private void offerToOpen(File file) {
+        int answer = JOptionPane.showConfirmDialog(this,
+                "PDF saved to:\n" + file.getAbsolutePath() + "\n\nOpen it now?",
+                "PDF Saved", JOptionPane.YES_NO_OPTION);
+        if (answer == JOptionPane.YES_OPTION && Desktop.isDesktopSupported()) {
+            try {
+                Desktop.getDesktop().open(file);
+            } catch (Exception ex) {
+                showExportError(ex);
+            }
+        }
+    }
+
+    private void showExportError(Exception ex) {
+        JOptionPane.showMessageDialog(this, "The PDF was not created: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
     }
 
     /** Converts one page of entities into table rows using the given row mapper. */
@@ -462,10 +579,22 @@ public class DashboardPanel extends JPanel {
             lblHint.setFont(font(Font.PLAIN, 12));
             lblHint.setForeground(BLUE);
 
+            // The PDF button handles its own click, so it does not open the "View all" list
+            JButton btnPdf = new JButton("PDF");
+            btnPdf.setFont(font(Font.PLAIN, 11));
+            btnPdf.setMargin(new Insets(1, 6, 1, 6));
+            btnPdf.setFocusPainted(false);
+            btnPdf.addActionListener(e -> exportSection(this));
+
+            JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+            actions.setOpaque(false);
+            actions.add(btnPdf);
+            actions.add(lblHint);
+
             JPanel titleRow = new JPanel(new BorderLayout());
             titleRow.setOpaque(false);
             titleRow.add(lblTitle, BorderLayout.WEST);
-            titleRow.add(lblHint, BorderLayout.EAST);
+            titleRow.add(actions, BorderLayout.EAST);
 
             panel.setBackground(Color.WHITE);
             panel.setBorder(border(null, 12, 12));
@@ -479,7 +608,7 @@ public class DashboardPanel extends JPanel {
                     openDialog();
                 }
             };
-            for (JComponent c : new JComponent[]{panel, titleRow, lblTitle, lblHint, table, scrollPane, scrollPane.getViewport()}) {
+            for (JComponent c : new JComponent[]{panel, titleRow, actions, lblTitle, lblHint, table, scrollPane, scrollPane.getViewport()}) {
                 c.addMouseListener(opener);
                 c.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
             }

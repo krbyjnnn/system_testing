@@ -1,7 +1,10 @@
 package com.flowershop.flowershop.ui.panels;
 
 import com.flowershop.flowershop.model.Category;
+import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.CategoryRepository;
+import com.flowershop.flowershop.service.AuditService;
+import com.flowershop.flowershop.ui.SpringContext;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -16,6 +19,9 @@ public class CategoryPanel extends JPanel {
     private static final String TYPE_PRODUCT = "Product";
 
     private final CategoryRepository categoryRepository;
+    private final User currentUser;
+    private final boolean readOnly; // view only: the add/edit form is not shown
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     private JTable table;
     private DefaultTableModel tableModel;
@@ -30,8 +36,10 @@ public class CategoryPanel extends JPanel {
     private JLabel lblMessage;
     private Category editing = null; // null = adding a new category
 
-    public CategoryPanel(CategoryRepository categoryRepository) {
+    public CategoryPanel(CategoryRepository categoryRepository, User currentUser, boolean readOnly) {
+        this.readOnly = readOnly;
         this.categoryRepository = categoryRepository;
+        this.currentUser = currentUser;
 
         initUI();
         loadData();
@@ -103,7 +111,9 @@ public class CategoryPanel extends JPanel {
         lblSummary = new JLabel(" ");
         lblSummary.setFont(new Font("Segoe UI", Font.BOLD, 13));
 
-        add(formCard, BorderLayout.NORTH);
+        if (!readOnly) {
+            add(formCard, BorderLayout.NORTH);
+        }
         add(new JScrollPane(table), BorderLayout.CENTER);
         add(lblSummary, BorderLayout.SOUTH);
     }
@@ -174,6 +184,7 @@ public class CategoryPanel extends JPanel {
             }
         }
 
+        String oldName = editing == null ? null : editing.getName();
         boolean isNew = editing == null;
         try {
             Category category;
@@ -185,6 +196,12 @@ public class CategoryPanel extends JPanel {
                 category.setType(type);
             }
             categoryRepository.save(category);
+            if (isNew) {
+                auditService.log(currentUser, "Category created", "PRODUCTS", name + " (" + type + ")");
+            } else {
+                auditService.log(currentUser, "Category edited", "PRODUCTS",
+                        oldName.equals(name) ? name + " (" + type + ")" : oldName + " renamed to " + name + " (" + type + ")");
+            }
 
             clearForm();
             loadData();

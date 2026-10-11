@@ -5,7 +5,9 @@ import com.flowershop.flowershop.model.Component;
 import com.flowershop.flowershop.model.ComponentInventory;
 import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.service.AuditService;
 import com.flowershop.flowershop.service.StockReceivingService;
+import com.flowershop.flowershop.ui.SpringContext;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableModel;
@@ -28,12 +30,19 @@ public class ComponentPanel extends JPanel {
     private final SupplierRepository supplierRepository;
     private final StockReceivingService stockReceivingService;
     private final User currentUser;
+    private final boolean readOnly; // view only: the add/edit form is not shown
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     private JTextField txtSearch;
     private JTable table;
     private DefaultTableModel tableModel;
     private JLabel lblSummary;
     private List<Component> shownComponents = new ArrayList<>();
+
+    private DefaultTableModel batchModel;
+    private JLabel lblBatchTitle;
+    // Every batch by component id, already in the order production uses them
+    private Map<Long, List<ComponentInventory>> batchesByComponent = new HashMap<>();
 
     private JLabel lblFormTitle;
     private JTextField txtName;
@@ -51,8 +60,10 @@ public class ComponentPanel extends JPanel {
             CategoryRepository categoryRepository,
             SupplierRepository supplierRepository,
             StockReceivingService stockReceivingService,
-            User currentUser
+            User currentUser,
+            boolean readOnly
     ) {
+        this.readOnly = readOnly;
         this.componentRepository = componentRepository;
         this.componentInventoryRepository = componentInventoryRepository;
         this.categoryRepository = categoryRepository;
@@ -123,7 +134,7 @@ public class ComponentPanel extends JPanel {
         searchPanel.add(txtSearch, BorderLayout.CENTER);
         searchPanel.add(searchButtons, BorderLayout.EAST);
 
-        String[] columns = {"Component", "Category", "Unit", "Unit Cost", "Qty On Hand", "Date Received", "Expiry", "Reorder Level", "Status"};
+        String[] columns = {"Component", "Category", "Unit", "Qty On Hand", "Reorder Level", "Status"};
         tableModel = new DefaultTableModel(columns, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
@@ -139,6 +150,7 @@ public class ComponentPanel extends JPanel {
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 fillForm();
+                showBatches();
             }
         });
 
@@ -148,11 +160,79 @@ public class ComponentPanel extends JPanel {
         JPanel center = new JPanel(new BorderLayout(0, 8));
         center.setOpaque(false);
         center.add(searchPanel, BorderLayout.NORTH);
-        center.add(new JScrollPane(table), BorderLayout.CENTER);
+        center.add(buildSplit(), BorderLayout.CENTER);
         center.add(lblSummary, BorderLayout.SOUTH);
 
-        add(top, BorderLayout.NORTH);
+        if (!readOnly) {
+            add(top, BorderLayout.NORTH);
+        }
         add(center, BorderLayout.CENTER);
+    }
+
+    // Components on top, and below them the batches of the selected component
+    private JSplitPane buildSplit() {
+        String[] batchColumns = {"Use Order", "Date Received", "Expiry", "Qty On Hand", "Unit Cost", "Supplier"};
+        batchModel = new DefaultTableModel(batchColumns, 0) {
+            @Override
+            public boolean isCellEditable(int row, int column) {
+                return false;
+            }
+        };
+        JTable batchTable = new JTable(batchModel);
+        batchTable.setRowHeight(28);
+        batchTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
+        batchTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+
+        lblBatchTitle = new JLabel(" ");
+        lblBatchTitle.setFont(new Font("Segoe UI", Font.BOLD, 13));
+
+        JPanel batchPanel = new JPanel(new BorderLayout(0, 6));
+        batchPanel.setOpaque(false);
+        batchPanel.add(lblBatchTitle, BorderLayout.NORTH);
+        batchPanel.add(new JScrollPane(batchTable), BorderLayout.CENTER);
+
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, new JScrollPane(table), batchPanel);
+        split.setResizeWeight(0.6);
+        split.setBorder(null);
+        return split;
+    }
+
+    // Lists the batches of the selected component in the order production uses them:
+    // earliest expiry first. Expired batches are never used, so they get no use order.
+    private void showBatches() {
+        batchModel.setRowCount(0);
+        int row = table.getSelectedRow();
+        if (row < 0 || row >= shownComponents.size()) {
+            lblBatchTitle.setText("Stock Batches: select a component above");
+            return;
+        }
+
+        Component component = shownComponents.get(row);
+        lblBatchTitle.setText("Stock Batches: " + component.getName());
+
+        List<ComponentInventory> batches = batchesByComponent.get(component.getComponentId());
+        if (batches == null) {
+            return;
+        }
+
+        LocalDate today = LocalDate.now();
+        int useOrder = 0;
+        for (ComponentInventory batch : batches) {
+            if (batch.getQuantityOnHand() <= 0) {
+                continue;
+            }
+            boolean expired = batch.getExpiryDate() != null && batch.getExpiryDate().isBefore(today);
+            String expiry = batch.getExpiryDate() == null ? "-"
+                    : batch.getExpiryDate() + (expired ? " (expired)" : "");
+            batchModel.addRow(new Object[]{
+                    expired ? "-" : String.valueOf(++useOrder),
+                    batch.getDateReceived().toString(),
+                    expiry,
+                    batch.getQuantityOnHand(),
+                    "₱" + String.format("%.2f", batch.getUnitCost()),
+                    batch.getSupplier() != null ? batch.getSupplier().getSupplierName() : "-"
+            });
+        }
     }
 
     private JPanel createCard() {
@@ -170,7 +250,7 @@ public class ComponentPanel extends JPanel {
     public void loadData() {
         loadDropdowns();
 
-        Map<Long, List<ComponentInventory>> batchesByComponent = new HashMap<>();
+        batchesByComponent = new HashMap<>();
         for (ComponentInventory batch : componentInventoryRepository.findAll()) {
             Long id = batch.getComponent().getComponentId();
             if (!batchesByComponent.containsKey(id)) {
@@ -220,44 +300,19 @@ public class ComponentPanel extends JPanel {
             total++;
 
             String categoryName = c.getCategory() != null ? c.getCategory().getName() : "N/A";
-            boolean hasRow = false;
-
-            for (ComponentInventory batch : batches) {
-                if (batch.getQuantityOnHand() <= 0) {
-                    continue;
-                }
-                shownComponents.add(c);
-                tableModel.addRow(new Object[]{
-                        c.getName(),
-                        categoryName,
-                        c.getUnitOfMeasure(),
-                        "₱" + String.format("%.2f", batch.getUnitCost()),
-                        batch.getQuantityOnHand(),
-                        batch.getDateReceived().toString(),
-                        batch.getExpiryDate() != null ? batch.getExpiryDate().toString() : "-",
-                        level,
-                        status
-                });
-                hasRow = true;
-            }
-
-            if (!hasRow) {
-                shownComponents.add(c);
-                tableModel.addRow(new Object[]{
-                        c.getName(),
-                        categoryName,
-                        c.getUnitOfMeasure(),
-                        "-",
-                        0,
-                        "-",
-                        "-",
-                        level,
-                        status
-                });
-            }
+            shownComponents.add(c);
+            tableModel.addRow(new Object[]{
+                    c.getName(),
+                    categoryName,
+                    c.getUnitOfMeasure(),
+                    qty,
+                    level,
+                    status
+            });
         }
 
         lblSummary.setText(total + " components  |  " + low + " low stock  |  " + out + " out of stock");
+        showBatches();
     }
 
     // Refreshes the category dropdown (keeps what was selected)
@@ -329,6 +384,8 @@ public class ComponentPanel extends JPanel {
 
         Category category = categories.get(cmbCategory.getSelectedIndex());
         int reorder = (Integer) spnComponentReorder.getValue();
+        String oldName = editing == null ? null : editing.getName();
+        int oldReorder = editing == null ? reorder : editing.getReorderLevel();
         boolean isNew = editing == null;
 
         try {
@@ -344,6 +401,17 @@ public class ComponentPanel extends JPanel {
                 component.setReorderLevel(reorder);
             }
             componentRepository.save(component);
+            if (isNew) {
+                auditService.log(currentUser, "Component created", "PRODUCTS",
+                        name + ", unit " + unit + ", reorder level " + reorder);
+            } else {
+                auditService.log(currentUser, "Component edited", "PRODUCTS",
+                        oldName.equals(name) ? name : oldName + " renamed to " + name);
+                if (oldReorder != reorder) {
+                    auditService.log(currentUser, "Reorder level changed", "INVENTORY",
+                            name + ": " + oldReorder + " to " + reorder);
+                }
+            }
 
             clearForm();
             loadData();

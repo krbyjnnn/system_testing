@@ -5,6 +5,8 @@ import com.flowershop.flowershop.model.Order;
 import com.flowershop.flowershop.model.User;
 import com.flowershop.flowershop.repository.DisputeRepository;
 import com.flowershop.flowershop.repository.OrderRepository;
+import com.flowershop.flowershop.service.AuditService;
+import com.flowershop.flowershop.ui.SpringContext;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -24,6 +26,7 @@ public class DisputePanel extends JPanel {
     private final User currentUser;
     private final DisputeRepository disputeRepository;
     private final OrderRepository orderRepository;
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     // Search + table
     private JTextField txtSearch;
@@ -437,12 +440,25 @@ public class DisputePanel extends JPanel {
         }
         dispute.setCustomerName(customer);
         dispute.setComplaint(complaint);
-        dispute.setStatus((String) cmbStatus.getSelectedItem());
+        boolean isNew = editingDispute == null;
+        String oldStatus = dispute.getStatus();
+        String newStatus = (String) cmbStatus.getSelectedItem();
+        dispute.setStatus(newStatus);
         int orderIndex = cmbOrder.getSelectedIndex();
         dispute.setOrder(orderIndex <= 0 ? null : orders.get(orderIndex - 1));
 
         try {
-            disputeRepository.save(dispute);
+            Dispute saved = disputeRepository.save(dispute);
+            if (isNew) {
+                auditService.log(currentUser, "Dispute filed", "DISPUTES",
+                        "Dispute #" + saved.getDisputeId() + " from " + customer + ", status " + newStatus);
+            } else if (!newStatus.equals(oldStatus)) {
+                auditService.log(currentUser, "Dispute status changed", "DISPUTES",
+                        "Dispute #" + saved.getDisputeId() + " from " + customer + ": " + oldStatus + " to " + newStatus);
+            } else {
+                auditService.log(currentUser, "Dispute edited", "DISPUTES",
+                        "Dispute #" + saved.getDisputeId() + " from " + customer);
+            }
             clearForm();
             loadData();
         } catch (Exception ex) {

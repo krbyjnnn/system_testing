@@ -2,10 +2,12 @@ package com.flowershop.flowershop.service;
 
 import com.flowershop.flowershop.model.*;
 import com.flowershop.flowershop.repository.*;
+import com.flowershop.flowershop.util.Permissions;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -15,6 +17,8 @@ import java.util.List;
 
 @Service
 public class SaleService {
+
+    public static final BigDecimal DOWN_PAYMENT_RATE = new BigDecimal("0.30");
 
     /** Contact and schedule info for PICK-UP and DELIVERY orders (fee is 0 for pick-up). */
     public record DeliveryDetails(String recipientName, String recipientPhone, String address,
@@ -26,40 +30,54 @@ public class SaleService {
     private final PaymentRepository paymentRepository;
     private final ProductInventoryRepository productInventoryRepository;
     private final DeliveryRepository deliveryRepository;
+    private final AuditService auditService;
 
     public SaleService(
             OrderRepository orderRepository,
             OrderItemRepository orderItemRepository,
             PaymentRepository paymentRepository,
             ProductInventoryRepository productInventoryRepository,
-            DeliveryRepository deliveryRepository
+            DeliveryRepository deliveryRepository,
+            AuditService auditService
     ) {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.paymentRepository = paymentRepository;
         this.productInventoryRepository = productInventoryRepository;
         this.deliveryRepository = deliveryRepository;
+        this.auditService = auditService;
+    }
+
+    // 30% of the total, rounded to centavos
+    public static BigDecimal downPaymentOf(BigDecimal total) {
+        return total.multiply(DOWN_PAYMENT_RATE).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    // What is still unpaid on an order (total minus every PAID payment so far)
+    public BigDecimal balanceDue(Order order) {
+        BigDecimal paid = paymentRepository.sumPaidByOrder(order.getOrderId());
+        BigDecimal balance = order.getTotalAmount().subtract(paid != null ? paid : BigDecimal.ZERO);
+        return balance.signum() < 0 ? BigDecimal.ZERO : balance;
     }
 
     /**
      * orderType: WALK-IN, PICK-UP or DELIVERY.
-     * payNow: true  -> order is COMPLETED and a payment is saved now.
-     *         false -> order stays PENDING with no payment until it is handed over.
+     * WALK-IN  -> full payment now, order is COMPLETED.
+     * Others   -> 30% down payment now, order stays PENDING until the balance is paid.
      * details: required for PICK-UP and DELIVERY, null for WALK-IN.
      */
     // @Transactional: if anything fails, the whole sale is cancelled (nothing is saved).
     @Transactional
     public String completeSale(User user, List<Product> products, List<Integer> quantities,
-                               String orderType, boolean payNow,
-                               String paymentMethod, String referenceNumber,
+                               String orderType, String paymentMethod, String referenceNumber,
                                DeliveryDetails details) {
+
+        // Only Staff can process sales (Owner and Manager cannot use the POS)
+        Permissions.require(user, Permissions.Feature.POS);
 
         boolean walkIn = "WALK-IN".equals(orderType);
         if (!walkIn && details == null) {
             throw new IllegalArgumentException("Pick-up and delivery orders need contact details.");
-        }
-        if (walkIn && !payNow) {
-            throw new IllegalArgumentException("Walk-in orders must be paid right away.");
         }
 
         // 1. Compute the total (items + delivery fee, so it matches what the customer pays)
@@ -70,10 +88,10 @@ public class SaleService {
             total = total.add(lineTotal);
         }
 
-        // 2. Save the order (COMPLETED = paid, PENDING = waiting for payment)
+        // 2. Save the order (COMPLETED = fully paid, PENDING = waiting for the balance)
         LocalDateTime now = LocalDateTime.now();
         String transactionNumber = "TXN" + now.format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"));
-        String orderStatus = payNow ? "COMPLETED" : "PENDING";
+        String orderStatus = walkIn ? "COMPLETED" : "PENDING";
         Order order = orderRepository.save(
                 new Order(transactionNumber, user, orderType, orderStatus, now, null, total));
 
@@ -87,11 +105,10 @@ public class SaleService {
             deductStock(product, qty);
         }
 
-        // 4. Save the payment only when money is collected now
-        if (payNow) {
-            String reference = referenceNumber.isEmpty() ? null : referenceNumber;
-            paymentRepository.save(new Payment(order, paymentMethod, total, "PAID", LocalDate.now(), reference));
-        }
+        // 4. Save the payment collected now: full amount for walk-in, 30% down payment otherwise
+        BigDecimal amountNow = walkIn ? total : downPaymentOf(total);
+        String reference = referenceNumber == null || referenceNumber.isEmpty() ? null : referenceNumber;
+        paymentRepository.save(new Payment(order, paymentMethod, amountNow, "PAID", LocalDate.now(), reference));
 
         // 5. Save pick-up / delivery details (fulfilment starts as PENDING)
         if (details != null) {
@@ -99,13 +116,60 @@ public class SaleService {
                     details.address(), details.date(), "PENDING", fee, details.notes()));
         }
 
+        if (walkIn) {
+            auditService.log(user, "Walk-in sale", "POS",
+                    transactionNumber + ", total " + peso(total) + ", paid via " + paymentMethod);
+        } else {
+            auditService.log(user, "Reservation created", "POS",
+                    transactionNumber + " (" + orderType + "), total " + peso(total)
+                            + ", down payment " + peso(amountNow) + " via " + paymentMethod
+                            + ", customer " + details.recipientName());
+        }
+
         return transactionNumber;
     }
 
-    // Takes stock from the oldest batch first
+    // Collects the remaining balance, then marks the order and its delivery COMPLETED
+    @Transactional
+    public void completePendingOrder(User user, Long orderId, String paymentMethod, String referenceNumber) {
+        Permissions.require(user, Permissions.Feature.POS);
+        Order order = orderRepository.findById(orderId)
+                .orElseThrow(() -> new IllegalArgumentException("Order not found."));
+        if (!"PENDING".equals(order.getOrderStatus())) {
+            throw new IllegalStateException("Only pending orders can be completed.");
+        }
+
+        BigDecimal balance = balanceDue(order);
+
+        order.setOrderStatus("COMPLETED");
+        orderRepository.save(order);
+
+        for (Delivery delivery : deliveryRepository.findByOrderOrderId(orderId)) {
+            delivery.setDeliveryStatus("COMPLETED");
+            deliveryRepository.save(delivery);
+        }
+
+        if (balance.signum() > 0) {
+            String reference = referenceNumber == null || referenceNumber.isEmpty() ? null : referenceNumber;
+            paymentRepository.save(new Payment(order, paymentMethod, balance, "PAID", LocalDate.now(), reference));
+        }
+
+        auditService.log(user, "Balance collected", "POS",
+                order.getTransactionNumber() + " completed, balance " + peso(balance) + " via " + paymentMethod);
+    }
+
+    private String peso(BigDecimal value) {
+        return "₱" + String.format("%,.2f", value);
+    }
+
+    // Takes stock from the batch that expires first (no expiry goes last), then the oldest received.
+    // Same order of use as the components in ProductionService.
     private void deductStock(Product product, int qty) {
         List<ProductInventory> batches = new ArrayList<>(productInventoryRepository.findAll());
-        batches.sort(Comparator.comparing(ProductInventory::getDateReceived));
+        batches.sort(Comparator
+                .comparing(ProductInventory::getExpiryDate, Comparator.nullsLast(Comparator.<LocalDate>naturalOrder()))
+                .thenComparing(ProductInventory::getDateReceived)
+                .thenComparing(ProductInventory::getPbatchId));
 
         int remaining = qty;
         for (ProductInventory batch : batches) {

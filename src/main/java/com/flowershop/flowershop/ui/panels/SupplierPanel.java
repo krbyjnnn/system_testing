@@ -8,6 +8,9 @@ import com.flowershop.flowershop.repository.ComponentInventoryRepository;
 import com.flowershop.flowershop.repository.ComponentRepository;
 import com.flowershop.flowershop.repository.ProcurementRepository;
 import com.flowershop.flowershop.repository.SupplierRepository;
+import com.flowershop.flowershop.service.AuditService;
+import com.flowershop.flowershop.ui.SpringContext;
+import com.flowershop.flowershop.util.InputRules;
 
 import javax.swing.*;
 import javax.swing.event.TableModelEvent;
@@ -39,6 +42,7 @@ public class SupplierPanel extends JPanel {
 
     // The logged-in user, saved as the one who received the procurement
     private final User currentUser;
+    private final AuditService auditService = SpringContext.getBean(AuditService.class);
 
     private JTabbedPane tabs;
     private JTextField txtSearch;
@@ -468,7 +472,9 @@ public class SupplierPanel extends JPanel {
         itemsTable.getColumnModel().getColumn(COL_COMPONENT).setCellEditor(new DefaultCellEditor(cboComponent));
 
         // One click is enough to start typing in the number cells
-        DefaultCellEditor numberEditor = new DefaultCellEditor(new JTextField());
+        JTextField numberField = new JTextField();
+        InputRules.decimalOnly(numberField);
+        DefaultCellEditor numberEditor = new DefaultCellEditor(numberField);
         numberEditor.setClickCountToStart(1);
         itemsTable.getColumnModel().getColumn(COL_QTY).setCellEditor(numberEditor);
         itemsTable.getColumnModel().getColumn(COL_COST).setCellEditor(numberEditor);
@@ -699,6 +705,10 @@ public class SupplierPanel extends JPanel {
                 item.setSdelivery(saved);
             }
             componentInventoryRepository.saveAll(items);
+            auditService.log(currentUser, "Delivery received", "SUPPLIERS",
+                    supplier.getSupplierName() + ", " + items.size() + " item(s), total ₱"
+                            + grandTotal.setScale(2, RoundingMode.HALF_UP)
+                            + (receiptNo.isEmpty() ? "" : ", receipt " + receiptNo));
 
             resetProcurementForm();
             // Opening the history tab reloads it, so the new procurement shows at the top
@@ -862,10 +872,20 @@ public class SupplierPanel extends JPanel {
         JButton btnClose = new JButton("Close");
         btnClose.addActionListener(e -> dialog.dispose());
 
+        JPanel footerButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        footerButtons.setOpaque(false);
+        // Only unpaid procurements can be settled, so paid ones get no button
+        if ("UNPAID".equalsIgnoreCase(procurement.getPaymentStatus())) {
+            JButton btnMarkPaid = new JButton("Mark as Paid");
+            btnMarkPaid.addActionListener(e -> markProcurementPaid(procurement, dialog));
+            footerButtons.add(btnMarkPaid);
+        }
+        footerButtons.add(btnClose);
+
         JPanel footer = new JPanel(new BorderLayout());
         footer.setOpaque(false);
         footer.add(lblTotal, BorderLayout.WEST);
-        footer.add(btnClose, BorderLayout.EAST);
+        footer.add(footerButtons, BorderLayout.EAST);
 
         JPanel content = new JPanel(new BorderLayout(0, 12));
         content.setBorder(BorderFactory.createEmptyBorder(15, 15, 15, 15));
@@ -877,6 +897,32 @@ public class SupplierPanel extends JPanel {
         dialog.setSize(720, 460);
         dialog.setLocationRelativeTo(this);
         dialog.setVisible(true);
+    }
+
+    // Settles an unpaid procurement. Payment method was chosen when it was logged, so only the status changes.
+    private void markProcurementPaid(Procurement procurement, JDialog dialog) {
+        int confirm = JOptionPane.showConfirmDialog(dialog,
+                "Mark this procurement from " + procurement.getSupplier().getSupplierName() + " ("
+                        + formatMoney(procurement.getTotalAmount()) + ") as PAID?",
+                "Mark as Paid", JOptionPane.YES_NO_OPTION);
+        if (confirm != JOptionPane.YES_OPTION) {
+            return;
+        }
+
+        try {
+            procurement.setPaymentStatus("PAID");
+            procurementRepository.save(procurement);
+            auditService.log(currentUser, "Procurement marked as paid", "SUPPLIERS",
+                    procurement.getSupplier().getSupplierName() + ", total " + formatMoney(procurement.getTotalAmount())
+                            + (text(procurement.getReceiptNumber()).isEmpty() ? "" : ", receipt " + procurement.getReceiptNumber()));
+            dialog.dispose();
+            loadHistory();
+        } catch (Exception ex) {
+            // Put the in-memory status back so the screen matches the database
+            procurement.setPaymentStatus("UNPAID");
+            JOptionPane.showMessageDialog(dialog, "Payment status was not changed: " + ex.getMessage(),
+                    "Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     // One "label: value" pair in the details grid
@@ -912,6 +958,8 @@ public class SupplierPanel extends JPanel {
         txtPhone = new JTextField();
         txtEmail = new JTextField();
         txtAddress = new JTextField();
+        InputRules.digitsOnly(txtPhone, 11);
+        InputRules.noSpaces(txtEmail);
 
         // Row 1 = labels, row 2 = inputs, so each label sits right above its field
         JPanel grid = new JPanel(new GridLayout(2, 5, 10, 3));
@@ -1062,6 +1110,8 @@ public class SupplierPanel extends JPanel {
         try {
             selectedSupplier.setStatus(active ? "INACTIVE" : "ACTIVE");
             supplierRepository.save(selectedSupplier);
+            auditService.log(currentUser, active ? "Supplier deactivated" : "Supplier activated", "SUPPLIERS",
+                    selectedSupplier.getSupplierName());
             loadData();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Status was not changed: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
@@ -1074,6 +1124,12 @@ public class SupplierPanel extends JPanel {
     private void saveSupplier(boolean isNew) {
         if (txtName.getText().trim().isEmpty()) {
             JOptionPane.showMessageDialog(this, "Supplier name is required.", "Warning", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        String email = txtEmail.getText().trim();
+        if (!email.isEmpty() && !InputRules.isEmail(email)) {
+            JOptionPane.showMessageDialog(this, "Enter a valid email, like name@email.com.", "Warning", JOptionPane.WARNING_MESSAGE);
             return;
         }
 
@@ -1091,6 +1147,8 @@ public class SupplierPanel extends JPanel {
 
         try {
             supplierRepository.save(supplier);
+            auditService.log(currentUser, isNew ? "Supplier added" : "Supplier edited", "SUPPLIERS",
+                    supplier.getSupplierName());
             loadData();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Supplier was not saved: " + ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);

@@ -49,4 +49,45 @@ public interface ComponentInventoryRepository extends JpaRepository<ComponentInv
             """,
             nativeQuery = true)
     Page<SpoilageRow> findSpoilage(Pageable pageable);
+
+    // Products and components that are running low, one row per item.
+    // The batches of an item are added together and compared with its reorder level.
+    // Components with no batches at all are included too, with a quantity of 0.
+    @Query(value = """
+            SELECT * FROM (
+                SELECT 'Product' AS itemType, p.product_name AS itemName, cat.name AS categoryName,
+                       CAST(SUM(pi.quantity_on_hand) AS SIGNED) AS quantityOnHand
+                FROM product_inventory pi
+                JOIN product p ON p.product_id = pi.product_id
+                LEFT JOIN category cat ON cat.category_id = p.category_id
+                GROUP BY p.product_id, p.product_name, cat.name
+                HAVING SUM(pi.quantity_on_hand) <= MAX(pi.reorder_level)
+                UNION ALL
+                SELECT 'Component', c.name, cat.name,
+                       CAST(COALESCE(SUM(ci.quantity_on_hand), 0) AS SIGNED)
+                FROM component c
+                LEFT JOIN component_inventory ci ON ci.component_id = c.component_id
+                LEFT JOIN category cat ON cat.category_id = c.category_id
+                GROUP BY c.component_id, c.name, c.reorder_level, cat.name
+                HAVING COALESCE(SUM(ci.quantity_on_hand), 0) <= c.reorder_level
+            ) s
+            ORDER BY s.quantityOnHand ASC, s.itemName ASC
+            """,
+            countQuery = """
+            SELECT COUNT(*) FROM (
+                SELECT p.product_id
+                FROM product_inventory pi
+                JOIN product p ON p.product_id = pi.product_id
+                GROUP BY p.product_id
+                HAVING SUM(pi.quantity_on_hand) <= MAX(pi.reorder_level)
+                UNION ALL
+                SELECT c.component_id
+                FROM component c
+                LEFT JOIN component_inventory ci ON ci.component_id = c.component_id
+                GROUP BY c.component_id, c.reorder_level
+                HAVING COALESCE(SUM(ci.quantity_on_hand), 0) <= c.reorder_level
+            ) s
+            """,
+            nativeQuery = true)
+    Page<LowStockRow> findLowStock(Pageable pageable);
 }

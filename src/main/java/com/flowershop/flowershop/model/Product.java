@@ -34,6 +34,11 @@ public class Product {
     @Column(name = "image_path", length = 255)
     private String imagePath;
 
+    // The photo itself, stored in the database so every PC sees it (image_path is only the legacy filename)
+    @Lob
+    @Column(name = "image_data", columnDefinition = "LONGBLOB")
+    private byte[] imageData;
+
     public Product() {
     }
     
@@ -108,5 +113,13 @@ public class Product {
 
     public void setImagePath(String imagePath) {
         this.imagePath = imagePath;
+    }
+
+    public byte[] getImageData() {
+        return imageData;
+    }
+
+    public void setImageData(byte[] imageData) {
+        this.imageData = imageData;
     }
 }

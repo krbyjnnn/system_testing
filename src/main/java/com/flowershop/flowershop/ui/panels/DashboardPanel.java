@@ -59,6 +59,8 @@ public class DashboardPanel extends JPanel {
 
     private final JLabel lblDailySales = new JLabel("₱0.00", SwingConstants.CENTER);
     private final JLabel lblItemsSold = new JLabel("0", SwingConstants.CENTER);
+    private final JLabel lblSalesTitle = new JLabel("Today's Sales", SwingConstants.CENTER);
+    private final JLabel lblItemsTitle = new JLabel("Items Sold Today", SwingConstants.CENTER);
     private final JLabel lblTotalProducts = new JLabel("0", SwingConstants.CENTER);
     private final JLabel lblWeeklySales = new JLabel("₱0.00");
     private final JLabel lblMonthlySales = new JLabel("₱0.00");
@@ -66,7 +68,7 @@ public class DashboardPanel extends JPanel {
 
     private final SalesChart salesChart = new SalesChart();
     private final List<PreviewSection> sections = new ArrayList<>();
-    private String chartMode = "DAILY"; // DAILY, WEEKLY or MONTHLY (only affects the chart)
+    private String chartMode = "DAILY"; // DAILY, WEEKLY or MONTHLY (changes the chart and the first two cards)
     // The points currently drawn in the chart, kept so the PDF report can list the same figures
     private List<String> chartLabels = new ArrayList<>();
     private List<BigDecimal> chartValues = new ArrayList<>();
@@ -133,14 +135,13 @@ public class DashboardPanel extends JPanel {
     private JPanel createCardsRow() {
         JPanel row = new JPanel(new GridLayout(1, 3, 15, 0));
         row.setOpaque(false);
-        row.add(createKpiCard("Today's Sales", lblDailySales, GREEN));
-        row.add(createKpiCard("Items Sold", lblItemsSold, new Color(23, 162, 184)));
-        row.add(createKpiCard("Active Products", lblTotalProducts, new Color(255, 193, 7)));
+        row.add(createKpiCard(lblSalesTitle, lblDailySales, GREEN));
+        row.add(createKpiCard(lblItemsTitle, lblItemsSold, new Color(23, 162, 184)));
+        row.add(createKpiCard(new JLabel("Active Products", SwingConstants.CENTER), lblTotalProducts, new Color(255, 193, 7)));
         return row;
     }
 
-    private JPanel createKpiCard(String title, JLabel value, Color accent) {
-        JLabel lblTitle = new JLabel(title, SwingConstants.CENTER);
+    private JPanel createKpiCard(JLabel lblTitle, JLabel value, Color accent) {
         lblTitle.setFont(font(Font.PLAIN, 12));
         lblTitle.setForeground(Color.GRAY);
 
@@ -203,7 +204,7 @@ public class DashboardPanel extends JPanel {
         return panel;
     }
 
-    /** Chart range button; it only changes the chart, not the net flow. */
+    /** Chart range button; it changes the chart and the sales / items sold cards, not the net flow. */
     private JToggleButton createFilterButton(String text, String mode) {
         JToggleButton button = new JToggleButton(text, mode.equals(chartMode));
         button.setFont(font(Font.PLAIN, 12));
@@ -211,6 +212,7 @@ public class DashboardPanel extends JPanel {
         button.addActionListener(e -> {
             chartMode = mode;
             runSafely(this::loadChart);
+            runSafely(this::loadPeriodCards);
         });
         return button;
     }
@@ -269,18 +271,34 @@ public class DashboardPanel extends JPanel {
         LocalDateTime now = LocalDateTime.now();
         LocalDate today = LocalDate.now();
 
-        lblDailySales.setText(money(orderRepository.calculateRevenueBetween(today.atStartOfDay(), now)));
         lblWeeklySales.setText(money(orderRepository.calculateRevenueBetween(today.minusDays(7).atStartOfDay(), now)));
         lblMonthlySales.setText(money(orderRepository.calculateRevenueBetween(today.withDayOfMonth(1).atStartOfDay(), now)));
         lblTotalProducts.setText(String.valueOf(productRepository.countActiveProducts()));
 
-        runSafely(() -> {
-            Long sold = orderItemRepository.countItemsSoldToday();
-            lblItemsSold.setText(String.valueOf(sold != null ? sold : 0L));
-        });
+        runSafely(this::loadPeriodCards);
         runSafely(this::loadChart);
         runSafely(this::loadNetFlow);
         sections.forEach(s -> runSafely(s::load));
+    }
+
+    /** Sales and items sold cards follow the selected filter: today, this week (Monday start) or this month. */
+    private void loadPeriodCards() {
+        LocalDateTime now = LocalDateTime.now();
+        LocalDate today = LocalDate.now();
+        LocalDate start = today;
+        String name = "Today";
+        if ("WEEKLY".equals(chartMode)) {
+            start = today.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            name = "This Week";
+        } else if ("MONTHLY".equals(chartMode)) {
+            start = today.withDayOfMonth(1);
+            name = "This Month";
+        }
+        lblSalesTitle.setText(name + "'s Sales");
+        lblItemsTitle.setText("Items Sold " + name);
+        lblDailySales.setText(money(orderRepository.calculateRevenueBetween(start.atStartOfDay(), now)));
+        Long sold = orderItemRepository.countItemsSoldBetween(start.atStartOfDay(), now);
+        lblItemsSold.setText(String.valueOf(sold != null ? sold : 0L));
     }
 
     /** Monthly net flow = money received this month minus refunds issued this month. */
@@ -378,8 +396,8 @@ public class DashboardPanel extends JPanel {
 
         try {
             List<String[]> summary = List.of(
-                    new String[]{"Today's Sales", lblDailySales.getText()},
-                    new String[]{"Items Sold", lblItemsSold.getText()},
+                    new String[]{lblSalesTitle.getText(), lblDailySales.getText()},
+                    new String[]{lblItemsTitle.getText(), lblItemsSold.getText()},
                     new String[]{"Active Products", lblTotalProducts.getText()},
                     new String[]{"Weekly Sales", lblWeeklySales.getText()},
                     new String[]{"Monthly Sales", lblMonthlySales.getText()},

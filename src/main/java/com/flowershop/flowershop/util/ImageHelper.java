@@ -1,6 +1,12 @@
 package com.flowershop.flowershop.util;
 
+import com.flowershop.flowershop.model.Product;
+
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import java.awt.Color;
@@ -11,47 +17,92 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 
 public class ImageHelper {
 
     private static final Path IMAGE_DIR = Paths.get("product-images");
     private static final int OVERSAMPLE = 2;
 
-    public static String saveImage(File source, String productCode) throws IOException {
-        Files.createDirectories(IMAGE_DIR);
+    private static final int MAX_STORED_SIZE = 800;
 
-        String name = source.getName();
-        int dot = name.lastIndexOf('.');
-        String ext = dot >= 0 ? name.substring(dot).toLowerCase() : ".jpg";
-        String safeCode = productCode.replaceAll("[^a-zA-Z0-9_-]", "_");
+    /** Reads an image file and returns a resized JPEG (max 800 px) ready to store in the database. */
+    public static byte[] toStoredBytes(File source) throws IOException {
+        BufferedImage img = ImageIO.read(source);
+        if (img == null) {
+            throw new IOException("Not a readable image");
+        }
+        double scale = Math.min(1.0, (double) MAX_STORED_SIZE / Math.max(img.getWidth(), img.getHeight()));
+        int w = Math.max(1, (int) Math.round(img.getWidth() * scale));
+        int h = Math.max(1, (int) Math.round(img.getHeight() * scale));
 
-        File[] old = IMAGE_DIR.toFile().listFiles((dir, n) -> n.startsWith(safeCode + "."));
-        if (old != null) {
-            for (File f : old) {
-                f.delete();
-            }
+        BufferedImage current = img;
+        int curW = img.getWidth();
+        int curH = img.getHeight();
+        while (curW / 2 >= w && curH / 2 >= h) {
+            curW /= 2;
+            curH /= 2;
+            current = resize(current, curW, curH);
         }
 
-        String fileName = safeCode + ext;
-        Files.copy(source.toPath(), IMAGE_DIR.resolve(fileName), StandardCopyOption.REPLACE_EXISTING);
-        return fileName;
+        // JPEG has no transparency, so draw on white
+        BufferedImage rgb = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = rgb.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g.setColor(Color.WHITE);
+        g.fillRect(0, 0, w, h);
+        g.drawImage(current, 0, 0, w, h, null);
+        g.dispose();
+
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ImageWriter writer = ImageIO.getImageWritersByFormatName("jpg").next();
+        ImageWriteParam param = writer.getDefaultWriteParam();
+        param.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+        param.setCompressionQuality(0.85f);
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(out)) {
+            writer.setOutput(ios);
+            writer.write(null, new IIOImage(rgb, null, null), param);
+        } finally {
+            writer.dispose();
+        }
+        return out.toByteArray();
     }
 
-    public static Icon loadIcon(String fileName, int width, int height) {
+    /** Photo for a product: the database copy first, the old local file only for rows not migrated yet. */
+    public static Icon loadIcon(Product product, int width, int height) {
+        byte[] data = product.getImageData();
+        if (data != null && data.length > 0) {
+            try {
+                BufferedImage img = ImageIO.read(new ByteArrayInputStream(data));
+                if (img != null) {
+                    return new ScaledIcon(fit(img, width * OVERSAMPLE, height * OVERSAMPLE), width, height);
+                }
+            } catch (IOException ignored) {
+                // fall through to the placeholder
+            }
+            return placeholder(width, height);
+        }
+        String fileName = product.getImagePath();
         if (fileName == null || fileName.isBlank()) {
             return placeholder(width, height);
         }
         File file = IMAGE_DIR.resolve(fileName).toFile();
-        if (!file.exists()) {
-            return placeholder(width, height);
+        return file.exists() ? loadIconFromFile(file, width, height) : placeholder(width, height);
+    }
+
+    /** The old local file for a filename, or null when this PC doesn't have it. */
+    public static File legacyFile(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return null;
         }
-        return loadIconFromFile(file, width, height);
+        File f = IMAGE_DIR.resolve(fileName).toFile();
+        return f.isFile() ? f : null;
     }
 
     public static Icon loadIconFromFile(File file, int width, int height) {

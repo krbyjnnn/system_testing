@@ -9,4 +9,6 @@ public interface SpoilageRow {
     Integer getQuantityOnHand();
 
     String getExpiryDate();
+
+    String getUpdatedAt();
 }

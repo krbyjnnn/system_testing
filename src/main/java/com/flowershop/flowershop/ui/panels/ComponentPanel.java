@@ -10,6 +10,7 @@ import com.flowershop.flowershop.service.StockReceivingService;
 import com.flowershop.flowershop.ui.SpringContext;
 
 import javax.swing.*;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.math.BigDecimal;
@@ -146,6 +147,30 @@ public class ComponentPanel extends JPanel {
         table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
         table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                                    boolean hasFocus, int row, int column) {
+                java.awt.Component cell = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                cell.setFont(cell.getFont().deriveFont(Font.BOLD));
+                if (!isSelected) {
+                    if ("In Stock".equals(value)) {
+                        cell.setBackground(new Color(212, 237, 222));
+                        cell.setForeground(new Color(21, 87, 36));
+                    } else if ("Low Stock".equals(value)) {
+                        cell.setBackground(new Color(255, 243, 205));
+                        cell.setForeground(new Color(133, 100, 4));
+                    } else if ("Out of Stock".equals(value)) {
+                        cell.setBackground(new Color(248, 215, 218));
+                        cell.setForeground(new Color(114, 28, 36));
+                    } else {
+                        cell.setBackground(Color.WHITE);
+                        cell.setForeground(Color.BLACK);
+                    }
+                }
+                return cell;
+            }
+        });
         // Clicking a row loads it into the form above so it can be edited
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {

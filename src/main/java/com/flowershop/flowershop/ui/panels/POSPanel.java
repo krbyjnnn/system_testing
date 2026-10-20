@@ -363,7 +363,7 @@ public class POSPanel extends JPanel {
     }
 
     private JPanel createCard(Product p) {
-        JLabel photo = new JLabel(ImageHelper.loadIcon(p.getImagePath(), CARD_PHOTO, CARD_PHOTO), SwingConstants.CENTER);
+        JLabel photo = new JLabel(ImageHelper.loadIcon(p, CARD_PHOTO, CARD_PHOTO), SwingConstants.CENTER);
 
         JLabel name = new JLabel(p.getProductName(), SwingConstants.CENTER);
         name.setFont(new Font("Segoe UI", Font.BOLD, 13));

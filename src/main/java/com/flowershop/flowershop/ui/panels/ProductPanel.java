@@ -17,6 +17,7 @@ import com.flowershop.flowershop.util.InputRules;
 
 import javax.swing.*;
 import javax.swing.filechooser.FileNameExtensionFilter;
+import javax.swing.table.DefaultTableCellRenderer;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.io.File;
@@ -364,6 +365,30 @@ public class ProductPanel extends JPanel {
         table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
         table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        table.getColumnModel().getColumn(5).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                                    boolean hasFocus, int row, int column) {
+                java.awt.Component cell = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                cell.setFont(cell.getFont().deriveFont(Font.BOLD));
+                if (!isSelected) {
+                    if ("In Stock".equals(value)) {
+                        cell.setBackground(new Color(212, 237, 222));
+                        cell.setForeground(new Color(21, 87, 36));
+                    } else if ("Low Stock".equals(value)) {
+                        cell.setBackground(new Color(255, 243, 205));
+                        cell.setForeground(new Color(133, 100, 4));
+                    } else if ("Out of Stock".equals(value)) {
+                        cell.setBackground(new Color(248, 215, 218));
+                        cell.setForeground(new Color(114, 28, 36));
+                    } else {
+                        cell.setBackground(Color.WHITE);
+                        cell.setForeground(Color.BLACK);
+                    }
+                }
+                return cell;
+            }
+        });
         // Clicking a row loads it into the form above so it can be edited
         table.getSelectionModel().addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
@@ -633,7 +658,7 @@ public class ProductPanel extends JPanel {
         }
 
         photoCard.setVisible(true);
-        lblPhoto.setIcon(ImageHelper.loadIcon(editing.getImagePath(), PHOTO_SIZE, PHOTO_SIZE));
+        lblPhoto.setIcon(ImageHelper.loadIcon(editing, PHOTO_SIZE, PHOTO_SIZE));
 
         if (Boolean.TRUE.equals(editing.getIsComposite())) {
             lblRecipeTitle.setText("Recipe for: " + editing.getProductName() + "  (what one piece uses)");
@@ -766,7 +791,8 @@ public class ProductPanel extends JPanel {
         }
 
         try {
-            editing.setImagePath(ImageHelper.saveImage(file, editing.getProductCode()));
+            editing.setImageData(ImageHelper.toStoredBytes(file));
+            editing.setImagePath(editing.getProductCode().replaceAll("[^a-zA-Z0-9_-]", "_") + ".jpg");
             editing = productRepository.save(editing);
             loadData();
             showMessage(lblPhotoMessage, "Photo saved.", false);
@@ -783,6 +809,7 @@ public class ProductPanel extends JPanel {
 
         try {
             editing.setImagePath(null);
+            editing.setImageData(null);
             editing = productRepository.save(editing);
             loadData();
             showMessage(lblPhotoMessage, "Photo removed.", false);

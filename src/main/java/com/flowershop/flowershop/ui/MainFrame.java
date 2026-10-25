@@ -16,7 +16,9 @@ import java.awt.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class MainFrame extends JFrame {
 
@@ -26,6 +28,7 @@ public class MainFrame extends JFrame {
     private CardLayout cardLayout;
     private JPanel contentArea;
     private final List<JButton> navButtons = new ArrayList<>();
+    private final Map<String, JButton> navByCard = new HashMap<>();
 
     // Sidebar palette: black panel (matches the logo background), gray buttons
     private static final Color SIDEBAR_BG = new Color(2, 2, 14);
@@ -57,13 +60,28 @@ public class MainFrame extends JFrame {
         // Only the screens this role may use are built at all, so nothing else can be opened.
         // The first one added is the screen shown after login.
         if (allowed(Feature.REPORTS)) {
+            DashboardPanel dashboard = new DashboardPanel(
+                    SpringContext.getBean(ProductRepository.class),
+                    SpringContext.getBean(ProductInventoryRepository.class),
+                    SpringContext.getBean(OrderRepository.class)
+            );
+            dashboard.setOnNavigate(card -> {
+                JButton target = navByCard.get(card);
+                if (target != null) {
+                    target.doClick();
+                }
+            });
+            contentArea.add(dashboard, "DASHBOARD");
+        }
+        if (allowed(Feature.REPORTS)) {
             contentArea.add(
-                    new DashboardPanel(
-                            SpringContext.getBean(ProductRepository.class),
-                            SpringContext.getBean(ProductInventoryRepository.class),
-                            SpringContext.getBean(OrderRepository.class)
+                    new ReportsPanel(
+                            currentUser,
+                            SpringContext.getBean(OrderRepository.class),
+                            SpringContext.getBean(OrderItemRepository.class),
+                            SpringContext.getBean(AuditService.class)
                     ),
-                    "DASHBOARD"
+                    "REPORTS"
             );
         }
         if (allowed(Feature.POS)) {
@@ -176,6 +194,7 @@ public class MainFrame extends JFrame {
         // 2. Navigation Buttons: a button only exists if the user's role may use that screen.
         // Same order as the cards above, so the first button matches the screen shown after login.
         addNav(sidebar, Feature.REPORTS, "Dashboard", "DASHBOARD");
+        addNav(sidebar, Feature.REPORTS, "Reports", "REPORTS");
         addNav(sidebar, Feature.POS, "Point of Sale", "POS");
         addNav(sidebar, Feature.INVENTORY_VIEW,
                 allowed(Feature.INVENTORY_EDIT) ? "Inventory" : "Inventory (View Only)", "INVENTORY");
@@ -288,6 +307,7 @@ public class MainFrame extends JFrame {
             highlightButton(button);
         });
 
+        navByCard.put(cardName, button);
         navButtons.add(button);
         return button;
     }
@@ -300,6 +320,8 @@ public class MainFrame extends JFrame {
             }
             if (c instanceof DashboardPanel) {
                 ((DashboardPanel) c).refreshDashboardData();
+            } else if (c instanceof ReportsPanel) {
+                ((ReportsPanel) c).loadData();
             } else if (c instanceof POSPanel) {
                 ((POSPanel) c).loadProducts();
             } else if (c instanceof InventoryPanel) {

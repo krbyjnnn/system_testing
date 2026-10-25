@@ -25,8 +25,11 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.prefs.Preferences;
 
 public class ProductPanel extends JPanel {
 
@@ -36,6 +39,14 @@ public class ProductPanel extends JPanel {
     private static final String CARD_RECIPE = "recipe";
     private static final String CARD_STOCK = "stock";
     private static final int PHOTO_SIZE = 160;
+
+    // "Expiring soon" uses the same setting as the Components tab ("Expiring within N days")
+    private static final Preferences PREFS = Preferences.userNodeForPackage(ComponentPanel.class);
+    private static final String EXPIRING_DAYS_KEY = "componentExpiringDays";
+    private static final int DEFAULT_EXPIRING_DAYS = 3;
+    private static final String STATUS_EXPIRING = "Expiring Component";
+    private static final Color ORANGE_BG = new Color(255, 213, 153);
+    private static final Color ORANGE_FG = new Color(166, 77, 0);
 
     private final ProductRepository productRepository;
     private final ProductInventoryRepository productInventoryRepository;
@@ -86,9 +97,12 @@ public class ProductPanel extends JPanel {
     private JLabel lblRecipeMessage;
     private List<Component> components = new ArrayList<>();
     private List<Recipe> recipeLines = new ArrayList<>();
+    private Map<Long, Integer> componentStock = new HashMap<>();   // usable stock per component (expired not counted)
+    private Set<Long> expiringComponents = new HashSet<>();        // components with a usable batch expiring soon
 
     // Make (arrange pieces now and deduct the components)
     private JSpinner spnMakeQty;
+    private JLabel lblMaxBuildable;
     private JLabel lblMakeMessage;
 
     // Stock form (for products bought already finished)
@@ -211,7 +225,7 @@ public class ProductPanel extends JPanel {
         recipeControls.add(btnRemoveRecipe);
         recipeControls.add(lblRecipeMessage);
 
-        recipeTableModel = new DefaultTableModel(new String[]{"Component", "Quantity", "Unit"}, 0) {
+        recipeTableModel = new DefaultTableModel(new String[]{"Component", "Quantity", "Unit", "Stock Available"}, 0) {
             @Override
             public boolean isCellEditable(int row, int column) {
                 return false;
@@ -222,6 +236,22 @@ public class ProductPanel extends JPanel {
         recipeTable.setFont(new Font("Segoe UI", Font.PLAIN, 13));
         recipeTable.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
         recipeTable.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        // Stock Available turns red when there is not even enough for one piece
+        recipeTable.getColumnModel().getColumn(3).setCellRenderer(new DefaultTableCellRenderer() {
+            @Override
+            public java.awt.Component getTableCellRendererComponent(JTable table, Object value, boolean isSelected,
+                                                                    boolean hasFocus, int row, int column) {
+                java.awt.Component cell = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);
+                boolean short1 = row < recipeLines.size() && stockOf(recipeLines.get(row).getComponent())
+                        < recipeLines.get(row).getQuantityNeeded();
+                if (!isSelected) {
+                    cell.setForeground(short1 ? new Color(114, 28, 36) : Color.BLACK);
+                    cell.setBackground(short1 ? new Color(248, 215, 218) : Color.WHITE);
+                }
+                cell.setFont(cell.getFont().deriveFont(short1 ? Font.BOLD : Font.PLAIN));
+                return cell;
+            }
+        });
         JScrollPane recipeScroll = new JScrollPane(recipeTable);
         recipeScroll.setPreferredSize(new Dimension(0, 90));
 
@@ -242,7 +272,11 @@ public class ProductPanel extends JPanel {
         makeRow.setOpaque(false);
         makeRow.add(new JLabel("Arrange"));
         makeRow.add(spnMakeQty);
-        makeRow.add(new JLabel("piece(s) now (uses up the components)"));
+        makeRow.add(new JLabel("piece(s) now"));
+        lblMaxBuildable = new JLabel("(Max buildable: 0)");
+        lblMaxBuildable.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        makeRow.add(lblMaxBuildable);
+        makeRow.add(new JLabel("(uses up the components)"));
         makeRow.add(btnMake);
         makeRow.add(lblMakeMessage);
 
@@ -378,6 +412,9 @@ public class ProductPanel extends JPanel {
                     } else if ("Low Stock".equals(value)) {
                         cell.setBackground(new Color(255, 243, 205));
                         cell.setForeground(new Color(133, 100, 4));
+                    } else if (STATUS_EXPIRING.equals(value)) {
+                        cell.setBackground(ORANGE_BG);
+                        cell.setForeground(ORANGE_FG);
                     } else if ("Out of Stock".equals(value)) {
                         cell.setBackground(new Color(248, 215, 218));
                         cell.setForeground(new Color(114, 28, 36));
@@ -402,12 +439,16 @@ public class ProductPanel extends JPanel {
         JPanel center = new JPanel(new BorderLayout(0, 8));
         center.setOpaque(false);
         center.add(searchPanel, BorderLayout.NORTH);
-        center.add(new JScrollPane(table), BorderLayout.CENTER);
-        center.add(lblSummary, BorderLayout.SOUTH);
+                center.add(new JScrollPane(table), BorderLayout.CENTER);
 
+        // The summary line sits at the very top of the panel, above the product form
+        JPanel north = new JPanel(new BorderLayout(0, 8));
+        north.setOpaque(false);
+        north.add(lblSummary, BorderLayout.NORTH);
         if (!readOnly) {
-            add(top, BorderLayout.NORTH);
+            north.add(top, BorderLayout.CENTER);
         }
+        add(north, BorderLayout.NORTH);
         add(center, BorderLayout.CENTER);
     }
 
@@ -438,17 +479,8 @@ public class ProductPanel extends JPanel {
             reorder.put(id, Math.max(level, batch.getReorderLevel()));
         }
 
-        // 2. Usable component stock (expired batches are not counted), to work out how many more can be made
-        LocalDate today = LocalDate.now();
-        Map<Long, Integer> componentStock = new HashMap<>();
-        for (ComponentInventory batch : componentInventoryRepository.findAll()) {
-            if (batch.getExpiryDate() != null && batch.getExpiryDate().isBefore(today)) {
-                continue;
-            }
-            Long id = batch.getComponent().getComponentId();
-            int qty = componentStock.containsKey(id) ? componentStock.get(id) : 0;
-            componentStock.put(id, qty + batch.getQuantityOnHand());
-        }
+        // 2. Usable component stock (expired batches are not counted) and which components are expiring soon
+        refreshComponentStock();
 
         // 3. Recipe lines grouped by product
         Map<Long, List<Recipe>> recipes = new HashMap<>();
@@ -467,6 +499,7 @@ public class ProductPanel extends JPanel {
         int total = 0;
         int low = 0;
         int out = 0;
+        int expiring = 0;
 
         for (Product p : productRepository.findAll()) {
             boolean matches = p.getProductName().toLowerCase().contains(keyword)
@@ -499,6 +532,12 @@ public class ProductPanel extends JPanel {
                     } else {
                         status = "In Stock";
                     }
+
+                    // A flower in the recipe has a batch expiring soon: flag it so it gets made and sold first
+                    if (!"Out of Stock".equals(status) && hasExpiringComponent(lines)) {
+                        status = STATUS_EXPIRING;
+                        expiring++;
+                    }
                 }
             } else {
                 available = String.valueOf(qty);
@@ -525,7 +564,8 @@ public class ProductPanel extends JPanel {
             });
         }
 
-        lblSummary.setText(total + " products  |  " + low + " low stock  |  " + out + " out of stock");
+        lblSummary.setText(total + " products  |  " + low + " low stock  |  " + out + " out of stock  |  "
+                + expiring + " expiring component" + (expiring == 1 ? "" : "s"));
 
         // Keep the product that was being edited selected
         if (editing != null) {
@@ -546,6 +586,64 @@ public class ProductPanel extends JPanel {
             most = Math.min(most, have / needed);
         }
         return most == Integer.MAX_VALUE ? 0 : most;
+    }
+
+    // Rebuilds the usable stock per component and the set of components with a batch expiring soon.
+    // Usable = not expired and not empty. Expiring soon = expires between today and the "Expiring within" days.
+    private void refreshComponentStock() {
+        LocalDate today = LocalDate.now();
+        LocalDate warnLimit = today.plusDays(PREFS.getInt(EXPIRING_DAYS_KEY, DEFAULT_EXPIRING_DAYS));
+
+        componentStock = new HashMap<>();
+        expiringComponents = new HashSet<>();
+        for (ComponentInventory batch : componentInventoryRepository.findAll()) {
+            boolean expired = batch.getExpiryDate() != null && batch.getExpiryDate().isBefore(today);
+            if (expired || batch.getQuantityOnHand() <= 0) {
+                continue;
+            }
+            Long id = batch.getComponent().getComponentId();
+            int qty = componentStock.containsKey(id) ? componentStock.get(id) : 0;
+            componentStock.put(id, qty + batch.getQuantityOnHand());
+
+            if (batch.getExpiryDate() != null && !batch.getExpiryDate().isAfter(warnLimit)) {
+                expiringComponents.add(id);
+            }
+        }
+    }
+
+    private boolean hasExpiringComponent(List<Recipe> lines) {
+        for (Recipe r : lines) {
+            if (expiringComponents.contains(r.getComponent().getComponentId())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int stockOf(Component component) {
+        Integer qty = componentStock.get(component.getComponentId());
+        return qty == null ? 0 : qty;
+    }
+
+    // "stem" -> "stems", "pcs" stays "pcs"
+    private String plural(String unit) {
+        if (unit == null || unit.isBlank()) {
+            return "";
+        }
+        return unit.endsWith("s") ? unit : unit + "s";
+    }
+
+    // Updates "(Max buildable: N)" for the selected product and keeps the Arrange spinner within it
+    private void updateMaxBuildable() {
+        int max = editing == null ? 0 : productionService.maxBuildable(editing);
+        lblMaxBuildable.setText("(Max buildable: " + max + ")");
+        lblMaxBuildable.setForeground(max > 0 ? new Color(21, 87, 36) : new Color(220, 53, 69));
+
+        SpinnerNumberModel model = (SpinnerNumberModel) spnMakeQty.getModel();
+        model.setMaximum(Math.max(1, max));
+        if ((Integer) model.getValue() > Math.max(1, max)) {
+            model.setValue(Math.max(1, max));
+        }
     }
 
     private void selectProduct(Long productId) {
@@ -682,6 +780,7 @@ public class ProductPanel extends JPanel {
         chkComposite.setSelected(false);
         recipeLines.clear();
         recipeTableModel.setRowCount(0);
+        updateMaxBuildable();
         showDetail();
     }
 
@@ -827,14 +926,17 @@ public class ProductPanel extends JPanel {
             return;
         }
 
+        refreshComponentStock();
         for (Recipe r : recipeRepository.findByProductProductId(editing.getProductId())) {
             recipeLines.add(r);
             recipeTableModel.addRow(new Object[]{
                     r.getComponent().getName(),
                     r.getQuantityNeeded(),
-                    r.getComponent().getUnitOfMeasure()
+                    r.getComponent().getUnitOfMeasure(),
+                    stockOf(r.getComponent()) + " " + plural(r.getComponent().getUnitOfMeasure()) + " available"
             });
         }
+        updateMaxBuildable();
     }
 
     private void addRecipeLine() {
@@ -911,7 +1013,7 @@ public class ProductPanel extends JPanel {
 
             spnMakeQty.setValue(1);
             loadData();
-            showMessage(lblMakeMessage, qty + " made. Components deducted from stock.", false);
+            showMessage(lblMakeMessage, qty + " made. Oldest component batches used first.", false);
         } catch (Exception ex) {
             showMessage(lblMakeMessage, ex.getMessage(), true);
         }

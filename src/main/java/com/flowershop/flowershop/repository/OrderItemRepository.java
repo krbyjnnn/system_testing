@@ -29,4 +29,17 @@ public interface OrderItemRepository extends JpaRepository<OrderItem, Long> {
             AND o.order_status = 'COMPLETED'
             """, nativeQuery = true)
     Long countItemsSoldBetween(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+
+    @Query(value = """
+            SELECT p.product_name, CAST(SUM(oi.quantity) AS SIGNED)
+            FROM order_items oi
+            JOIN orders o ON o.order_id = oi.order_id
+            JOIN product p ON p.product_id = oi.product_id
+            WHERE o.order_date >= :startDate AND o.order_date <= :endDate
+            AND o.order_status = 'COMPLETED'
+            GROUP BY p.product_id, p.product_name
+            ORDER BY SUM(oi.quantity) DESC
+            LIMIT 8
+            """, nativeQuery = true)
+    List<Object[]> findTopSelling(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 }

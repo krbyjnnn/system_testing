@@ -22,6 +22,14 @@ public class ProductionService {
 
     private static final int DEFAULT_REORDER_LEVEL = 5;
 
+    // Order of use (FIFO): the batch that expires first goes first (no expiry goes last),
+    // then the oldest received, then the lowest batch id.
+    // Make Product and the "Max buildable" figure both use this, so they always agree.
+    public static final Comparator<ComponentInventory> FIFO_ORDER = Comparator
+            .comparing(ComponentInventory::getExpiryDate, Comparator.nullsLast(Comparator.<LocalDate>naturalOrder()))
+            .thenComparing(ComponentInventory::getDateReceived)
+            .thenComparing(ComponentInventory::getCbatchId);
+
     private final RecipeRepository recipeRepository;
     private final ComponentInventoryRepository componentInventoryRepository;
     private final ProductInventoryRepository productInventoryRepository;
@@ -55,12 +63,6 @@ public class ProductionService {
 
         LocalDate today = LocalDate.now();
 
-        // Order of use: earliest expiry first (no expiry goes last), then oldest received, then lowest batch id
-        Comparator<ComponentInventory> order = Comparator
-                .comparing(ComponentInventory::getExpiryDate, Comparator.nullsLast(Comparator.<LocalDate>naturalOrder()))
-                .thenComparing(ComponentInventory::getDateReceived)
-                .thenComparing(ComponentInventory::getCbatchId);
-
         // Step 1: for every recipe line, find the usable batches and check there is enough
         List<List<ComponentInventory>> usable = new ArrayList<>();
         List<String> shortages = new ArrayList<>();
@@ -79,7 +81,7 @@ public class ProductionService {
                     available += batch.getQuantityOnHand();
                 }
             }
-            batches.sort(order);
+            batches.sort(FIFO_ORDER);
             usable.add(batches);
 
             if (available < needed) {
@@ -122,5 +124,34 @@ public class ProductionService {
 
         return productInventoryRepository.save(new ProductInventory(
                 null, product, quantity, DEFAULT_REORDER_LEVEL, unitCost, today, earliestExpiry));
+    }
+
+    // Usable stock of one component: expired and empty batches are not counted.
+    public int usableStock(Long componentId) {
+        LocalDate today = LocalDate.now();
+        int total = 0;
+        for (ComponentInventory batch : componentInventoryRepository.findByComponentComponentId(componentId)) {
+            boolean expired = batch.getExpiryDate() != null && batch.getExpiryDate().isBefore(today);
+            if (!expired && batch.getQuantityOnHand() > 0) {
+                total += batch.getQuantityOnHand();
+            }
+        }
+        return total;
+    }
+
+    // The most pieces of this product that can be arranged right now:
+    // the scarcest component in the recipe decides (usable stock / quantity needed, rounded down).
+    public int maxBuildable(Product product) {
+        if (product == null || !Boolean.TRUE.equals(product.getIsComposite())) {
+            return 0;
+        }
+        int most = Integer.MAX_VALUE;
+        for (Recipe line : recipeRepository.findByProductProductId(product.getProductId())) {
+            if (line.getQuantityNeeded() <= 0) {
+                continue;
+            }
+            most = Math.min(most, usableStock(line.getComponent().getComponentId()) / line.getQuantityNeeded());
+        }
+        return most == Integer.MAX_VALUE ? 0 : most;
     }
 }

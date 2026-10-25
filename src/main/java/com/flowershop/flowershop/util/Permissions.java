@@ -5,11 +5,11 @@ import com.flowershop.flowershop.model.User;
 import java.util.EnumSet;
 import java.util.Set;
 
-// Single place that decides who can do what, following the use case diagram:
-//   OWNER   -> Generate Report, Manage Suppliers, Disputes, Returns, User Management (+ Audit Trail)
-//   MANAGER -> Inventory Management (full), Manage Suppliers
+// Single place that decides who can do what:
+//   OWNER   -> everything (dashboard, POS, inventory, suppliers, disputes, returns, users, audit, backups)
+//   MANAGER -> Inventory Management (full), Manage Suppliers, approves voids
 //   STAFF   -> Process Sales (POS), Inventory (view only)
-// Owner and Manager cannot use the POS, but only the Manager can approve a void done by Staff. Only the Manager can change inventory.
+// Only the Manager can approve a void done at the POS (with the void passkey).
 public final class Permissions {
 
     public enum Feature {
@@ -35,8 +35,9 @@ public final class Permissions {
         }
         switch (role.trim().toUpperCase()) {
             case "OWNER":
-                return EnumSet.of(Feature.REPORTS, Feature.SUPPLIERS, Feature.DISPUTES,
-                        Feature.RETURNS, Feature.USERS, Feature.AUDIT, Feature.BACKUPS);
+                return EnumSet.of(Feature.REPORTS, Feature.POS, Feature.INVENTORY_VIEW, Feature.INVENTORY_EDIT,
+                        Feature.SUPPLIERS, Feature.DISPUTES, Feature.RETURNS, Feature.USERS,
+                        Feature.AUDIT, Feature.BACKUPS);
             case "MANAGER":
                 return EnumSet.of(Feature.INVENTORY_VIEW, Feature.INVENTORY_EDIT, Feature.SUPPLIERS,
                         Feature.APPROVE_VOID);

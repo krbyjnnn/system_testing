@@ -7,6 +7,8 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 
 public interface ComponentInventoryRepository extends JpaRepository<ComponentInventory, Long> {
@@ -90,4 +92,22 @@ public interface ComponentInventoryRepository extends JpaRepository<ComponentInv
             """,
             nativeQuery = true)
     Page<LowStockRow> findLowStock(Pageable pageable);
+
+    // Expired stock still on the shelf, plus spoilage that was logged
+    @Query(value = """
+            SELECT COALESCE(SUM(s.cost), 0) FROM (
+                SELECT pi.quantity_on_hand * pi.unit_cost AS cost
+                FROM product_inventory pi
+                WHERE pi.expiry_date >= :startDate AND pi.expiry_date < CURDATE() AND pi.quantity_on_hand > 0
+                UNION ALL
+                SELECT ci.quantity_on_hand * ci.unit_cost
+                FROM component_inventory ci
+                WHERE ci.expiry_date >= :startDate AND ci.expiry_date < CURDATE() AND ci.quantity_on_hand > 0
+                UNION ALL
+                SELECT sl.quantity * sl.unit_cost
+                FROM spoilage_log sl
+                WHERE sl.logged_at >= :startDate
+            ) s
+            """, nativeQuery = true)
+    BigDecimal sumSpoilageCostSince(@Param("startDate") LocalDate startDate);
 }

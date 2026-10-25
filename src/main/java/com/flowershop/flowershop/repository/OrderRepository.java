@@ -59,4 +59,46 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             ORDER BY period
             """, nativeQuery = true)
     List<SalesPoint> findMonthlySales();
+
+    @Query(value = """
+            SELECT CAST(DATE(o.order_date) AS CHAR) AS period,
+                   CAST(COUNT(*) AS SIGNED) AS orders,
+                   COALESCE(SUM(o.total_amount), 0) AS revenue,
+                   CAST(COALESCE(SUM(i.qty), 0) AS SIGNED) AS itemsSold
+            FROM orders o
+            LEFT JOIN (SELECT order_id, SUM(quantity) AS qty FROM order_items GROUP BY order_id) i ON i.order_id = o.order_id
+            WHERE o.order_status = 'COMPLETED'
+            AND o.order_date >= :startDate AND o.order_date < :endDate
+            GROUP BY period
+            ORDER BY period
+            """, nativeQuery = true)
+    List<SalesReportRow> findDailyReport(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+
+    @Query(value = """
+            SELECT CAST(DATE_SUB(DATE(o.order_date), INTERVAL WEEKDAY(o.order_date) DAY) AS CHAR) AS period,
+                   CAST(COUNT(*) AS SIGNED) AS orders,
+                   COALESCE(SUM(o.total_amount), 0) AS revenue,
+                   CAST(COALESCE(SUM(i.qty), 0) AS SIGNED) AS itemsSold
+            FROM orders o
+            LEFT JOIN (SELECT order_id, SUM(quantity) AS qty FROM order_items GROUP BY order_id) i ON i.order_id = o.order_id
+            WHERE o.order_status = 'COMPLETED'
+            AND o.order_date >= :startDate AND o.order_date < :endDate
+            GROUP BY period
+            ORDER BY period
+            """, nativeQuery = true)
+    List<SalesReportRow> findWeeklyReport(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+
+    @Query(value = """
+            SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS period,
+                   CAST(COUNT(*) AS SIGNED) AS orders,
+                   COALESCE(SUM(o.total_amount), 0) AS revenue,
+                   CAST(COALESCE(SUM(i.qty), 0) AS SIGNED) AS itemsSold
+            FROM orders o
+            LEFT JOIN (SELECT order_id, SUM(quantity) AS qty FROM order_items GROUP BY order_id) i ON i.order_id = o.order_id
+            WHERE o.order_status = 'COMPLETED'
+            AND o.order_date >= :startDate AND o.order_date < :endDate
+            GROUP BY period
+            ORDER BY period
+            """, nativeQuery = true)
+    List<SalesReportRow> findMonthlyReport(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 }

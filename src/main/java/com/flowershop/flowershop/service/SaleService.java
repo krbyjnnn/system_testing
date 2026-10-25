@@ -72,7 +72,7 @@ public class SaleService {
                                String orderType, String paymentMethod, String referenceNumber,
                                DeliveryDetails details) {
 
-        // Only Staff can process sales (Owner and Manager cannot use the POS)
+        // Access is limited by the shared POS permission.
         Permissions.require(user, Permissions.Feature.POS);
 
         boolean walkIn = "WALK-IN".equals(orderType);

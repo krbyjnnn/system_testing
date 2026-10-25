@@ -194,7 +194,6 @@ public class MainFrame extends JFrame {
         // 2. Navigation Buttons: a button only exists if the user's role may use that screen.
         // Same order as the cards above, so the first button matches the screen shown after login.
         addNav(sidebar, Feature.REPORTS, "Dashboard", "DASHBOARD");
-        addNav(sidebar, Feature.REPORTS, "Reports", "REPORTS");
         addNav(sidebar, Feature.POS, "Point of Sale", "POS");
         addNav(sidebar, Feature.INVENTORY_VIEW,
                 allowed(Feature.INVENTORY_EDIT) ? "Inventory" : "Inventory (View Only)", "INVENTORY");
@@ -202,6 +201,7 @@ public class MainFrame extends JFrame {
         addNav(sidebar, Feature.DISPUTES, "Disputes", "DISPUTES");
         addNav(sidebar, Feature.RETURNS, "Returns", "RETURNS");
         addNav(sidebar, Feature.USERS, "Users", "USERS");
+        addNav(sidebar, Feature.REPORTS, "Reports", "REPORTS");
         addNav(sidebar, Feature.AUDIT, "Audit Trail", "AUDIT");
         addNav(sidebar, Feature.BACKUPS, "Backups", "BACKUPS");
 

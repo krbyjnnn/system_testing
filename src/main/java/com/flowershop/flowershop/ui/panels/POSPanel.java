@@ -187,7 +187,7 @@ public class POSPanel extends JPanel {
         bottomPanel.setOpaque(false);
 
         JButton btnRemove = new JButton("Void Item");
-        btnRemove.setToolTipText("Needs the void passkey of a Manager");
+        btnRemove.setToolTipText("Needs the void passkey of an Owner or Manager");
         btnRemove.addActionListener(e -> voidSelectedItem());
         JPanel removePanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         removePanel.setOpaque(false);
@@ -464,14 +464,14 @@ public class POSPanel extends JPanel {
         if (left <= 0) {
             JOptionPane.showMessageDialog(this,
                     "Not enough stock. Available: " + available + ", already in cart: " + inCart,
-                    "Insufficient Stock", JOptionPane.WARNING_MESSAGE);
+                    "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
             return;
         }
 
-        JSpinner spnQty = new JSpinner(new SpinnerNumberModel(1, 1, left, 1));
+        JSpinner spnQty = new JSpinner(new SpinnerNumberModel(1, 1, null, 1));
         JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
         form.add(new JLabel("Add " + product.getProductName() + " (" + peso(product.getSellingPrice()) + ") to the order?"));
-        form.add(new JLabel("Quantity (max " + left + "):"));
+        form.add(new JLabel("Quantity (available " + left + "):"));
         form.add(spnQty);
 
         int choice = JOptionPane.showConfirmDialog(this, form, "Confirm Add",
@@ -481,6 +481,13 @@ public class POSPanel extends JPanel {
         }
 
         int qty = (int) spnQty.getValue();
+        if (qty > left) {
+            JOptionPane.showMessageDialog(this,
+                    "Cannot add " + qty + " units of " + product.getProductName()
+                            + ". Only " + left + " available (" + inCart + " already in the cart).",
+                    "Insufficient Stock", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
 
         if (cartIndex >= 0) {
             cartQuantities.set(cartIndex, inCart + qty);
@@ -492,7 +499,7 @@ public class POSPanel extends JPanel {
 }
 
     // Voiding takes a line out of the cart. Like a cashier system, it needs a supervisor:
-    // a Manager enters their void passkey, and the void is written to the audit trail.
+    // an Owner or Manager enters their void passkey, and the void is written to the audit trail.
     private void voidSelectedItem() {
         int row = cartTable.getSelectedRow();
         if (row < 0 || row >= cartProducts.size()) {
@@ -507,8 +514,8 @@ public class POSPanel extends JPanel {
         JPasswordField txtApproverPassword = new JPasswordField(16);
         JPanel form = new JPanel(new GridLayout(0, 1, 0, 4));
         form.add(new JLabel("Void: " + product.getProductName() + " x" + qty + "  (" + String.format("₱%,.2f", amount) + ")"));
-        form.add(new JLabel("A Manager must approve this void."));
-        form.add(new JLabel("Manager passkey"));
+        form.add(new JLabel("An Owner or Manager must approve this void."));
+        form.add(new JLabel("Owner or Manager passkey"));
         form.add(txtApproverPassword);
 
         int choice = JOptionPane.showConfirmDialog(this, form, "Void Approval",

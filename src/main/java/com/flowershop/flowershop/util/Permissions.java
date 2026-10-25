@@ -9,7 +9,7 @@ import java.util.Set;
 //   OWNER   -> everything (dashboard, POS, inventory, suppliers, disputes, returns, users, audit, backups)
 //   MANAGER -> Inventory Management (full), Manage Suppliers, approves voids
 //   STAFF   -> Process Sales (POS), Inventory (view only)
-// Only the Manager can approve a void done at the POS (with the void passkey).
+// Owners and Managers can approve a void done at the POS (with the void passkey).
 public final class Permissions {
 
     public enum Feature {
@@ -37,7 +37,7 @@ public final class Permissions {
             case "OWNER":
                 return EnumSet.of(Feature.REPORTS, Feature.POS, Feature.INVENTORY_VIEW, Feature.INVENTORY_EDIT,
                         Feature.SUPPLIERS, Feature.DISPUTES, Feature.RETURNS, Feature.USERS,
-                        Feature.AUDIT, Feature.BACKUPS);
+                        Feature.AUDIT, Feature.BACKUPS, Feature.APPROVE_VOID);
             case "MANAGER":
                 return EnumSet.of(Feature.INVENTORY_VIEW, Feature.INVENTORY_EDIT, Feature.SUPPLIERS,
                         Feature.APPROVE_VOID);

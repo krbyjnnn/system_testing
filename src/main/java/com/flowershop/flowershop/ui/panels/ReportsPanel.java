@@ -1,13 +1,18 @@
 package com.flowershop.flowershop.ui.panels;
 
 import com.flowershop.flowershop.model.User;
+import com.flowershop.flowershop.repository.ComponentInventoryRepository;
 import com.flowershop.flowershop.repository.OrderItemRepository;
 import com.flowershop.flowershop.repository.OrderRepository;
+import com.flowershop.flowershop.repository.PaymentRepository;
+import com.flowershop.flowershop.repository.ReturnsRepository;
+import com.flowershop.flowershop.repository.SalesPoint;
 import com.flowershop.flowershop.repository.SalesReportRow;
 import com.flowershop.flowershop.service.AuditService;
 import com.flowershop.flowershop.ui.DatePickerField;
 import com.flowershop.flowershop.ui.DatePickerField.Mode;
-import com.flowershop.flowershop.util.PdfReport;
+import com.flowershop.flowershop.ui.SpringContext;
+import com.flowershop.flowershop.util.SalesReportPdf;
 
 import javax.swing.*;
 import javax.swing.table.DefaultTableCellRenderer;
@@ -49,11 +54,25 @@ public class ReportsPanel extends JPanel {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("MMM dd, yyyy");
     private static final DateTimeFormatter ROW_DAY = DateTimeFormatter.ofPattern("EEE, MMM dd, yyyy");
-    private static final String[] COLUMNS = {"Day", "Orders", "Items Sold", "Revenue"};
+    private static final String[] COLUMNS = {"Day", "Orders", "Items Sold", "Gross Revenue", "Refunds",
+            "COGS (Cost of Goods Sold)", "Spoilage Cost", "Net Flow"};
+    private static final int NET_COLUMN = COLUMNS.length - 1;
+
+    private static final Color PAGE_BACKGROUND = new Color(245, 247, 250);
+    private static final Color BORDER = new Color(220, 224, 230);
+    private static final Color HEADER_BACKGROUND = new Color(230, 234, 240);
+    private static final Color TEXT = new Color(40, 40, 40);
+    private static final Color BLUE = new Color(13, 110, 253);
+    private static final Color RED = new Color(220, 53, 69);
+    private static final Color PURPLE = new Color(111, 66, 193);
+    private static final Color GREEN = new Color(40, 167, 69);
 
     private final User currentUser;
     private final OrderRepository orderRepository;
     private final OrderItemRepository orderItemRepository;
+    private final ReturnsRepository returnsRepository;
+    private final PaymentRepository paymentRepository;
+    private final ComponentInventoryRepository componentInventoryRepository;
     private final AuditService auditService;
 
     private final JComboBox<ReportType> cmbType = new JComboBox<>(ReportType.values());
@@ -63,8 +82,13 @@ public class ReportsPanel extends JPanel {
     private final DatePickerField pickTo = new DatePickerField();
     private final JButton btnExport = new JButton("Export PDF");
     private final JLabel lblRevenue = new JLabel("₱0.00");
-    private final JLabel lblOrders = new JLabel("0");
-    private final JLabel lblItems = new JLabel("0");
+    private final JLabel lblRevenueSub = new JLabel("0 Orders | 0 Items Sold");
+    private final JLabel lblRefunds = new JLabel("₱0.00");
+    private final JLabel lblRefundsSub = new JLabel("Returned to customers");
+    private final JLabel lblSpoilage = new JLabel("₱0.00");
+    private final JLabel lblSpoilageSub = new JLabel("Expired and wilted stock");
+    private final JLabel lblNet = new JLabel("₱0.00");
+    private final JLabel lblNetSub = new JLabel("After refunds, COGS and spoilage");
     private final JLabel lblStatus = new JLabel(" ");
     private final DefaultTableModel model;
 
@@ -73,7 +97,12 @@ public class ReportsPanel extends JPanel {
     private LocalDate shownFrom = LocalDate.now();
     private LocalDate shownTo = LocalDate.now();
     private final List<Object[]> shownRows = new ArrayList<>();
-    private String[] shownTotals = {"₱0.00", "0", "0"};
+    private BigDecimal shownRevenue = BigDecimal.ZERO;
+    private BigDecimal shownRefunds = BigDecimal.ZERO;
+    private BigDecimal shownCogs = BigDecimal.ZERO;
+    private BigDecimal shownSpoilage = BigDecimal.ZERO;
+    private long shownOrders;
+    private long shownItems;
 
     public ReportsPanel(User currentUser, OrderRepository orderRepository,
                         OrderItemRepository orderItemRepository, AuditService auditService) {
@@ -81,10 +110,14 @@ public class ReportsPanel extends JPanel {
         this.orderRepository = orderRepository;
         this.orderItemRepository = orderItemRepository;
         this.auditService = auditService;
+        // Taken from the Spring context so MainFrame keeps building this panel the same way
+        this.returnsRepository = SpringContext.getBean(ReturnsRepository.class);
+        this.paymentRepository = SpringContext.getBean(PaymentRepository.class);
+        this.componentInventoryRepository = SpringContext.getBean(ComponentInventoryRepository.class);
 
         setLayout(new BorderLayout(15, 15));
         setBorder(BorderFactory.createEmptyBorder(20, 20, 20, 20));
-        setBackground(new Color(245, 247, 250));
+        setBackground(PAGE_BACKGROUND);
 
         JLabel lblTitle = new JLabel("Reports");
         lblTitle.setFont(new Font("Segoe UI", Font.BOLD, 22));
@@ -95,7 +128,7 @@ public class ReportsPanel extends JPanel {
         JPanel controls = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 6));
         controls.setBackground(Color.WHITE);
         controls.setBorder(BorderFactory.createCompoundBorder(
-                BorderFactory.createLineBorder(new Color(220, 224, 230)),
+                BorderFactory.createLineBorder(BORDER),
                 BorderFactory.createEmptyBorder(8, 8, 8, 8)));
         controls.add(boldLabel("Report"));
         controls.add(cmbType);
@@ -119,11 +152,12 @@ public class ReportsPanel extends JPanel {
         head.add(titles, BorderLayout.NORTH);
         head.add(controls, BorderLayout.CENTER);
 
-        JPanel cards = new JPanel(new GridLayout(1, 3, 15, 0));
+        JPanel cards = new JPanel(new GridLayout(1, 4, 15, 0));
         cards.setOpaque(false);
-        cards.add(card("Total Revenue", lblRevenue, new Color(13, 110, 253)));
-        cards.add(card("Orders", lblOrders, new Color(25, 135, 84)));
-        cards.add(card("Items Sold", lblItems, new Color(214, 51, 132)));
+        cards.add(card(BLUE, "₱", "Gross Revenue", lblRevenue, lblRevenueSub));
+        cards.add(card(RED, "↩", "Total Refunds", lblRefunds, lblRefundsSub));
+        cards.add(card(PURPLE, "!", "Spoilage Cost", lblSpoilage, lblSpoilageSub));
+        cards.add(card(GREEN, "↗", "Net Cash Flow", lblNet, lblNetSub));
 
         JPanel top = new JPanel(new BorderLayout(0, 12));
         top.setOpaque(false);
@@ -137,15 +171,7 @@ public class ReportsPanel extends JPanel {
             }
         };
         JTable table = new JTable(model);
-        table.setRowHeight(28);
-        table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        table.getTableHeader().setFont(new Font("Segoe UI", Font.BOLD, 13));
-        DefaultTableCellRenderer right = new DefaultTableCellRenderer();
-        right.setHorizontalAlignment(SwingConstants.RIGHT);
-        for (int i = 1; i < COLUMNS.length; i++) {
-            table.getColumnModel().getColumn(i).setCellRenderer(right);
-        }
-        table.getColumnModel().getColumn(0).setPreferredWidth(280);
+        styleTable(table);
 
         lblStatus.setFont(new Font("Segoe UI", Font.PLAIN, 13));
 
@@ -186,21 +212,91 @@ public class ReportsPanel extends JPanel {
         return label;
     }
 
-    private JPanel card(String title, JLabel value, Color accent) {
-        JPanel panel = new JPanel(new BorderLayout(0, 4));
+    // Same card look as the dashboard (round icon, small title, big value, small caption) with a coloured left edge
+    private JPanel card(Color accent, String glyph, String title, JLabel value, JLabel caption) {
+        JLabel lblTitle = new JLabel(title);
+        lblTitle.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        lblTitle.setForeground(Color.GRAY);
+
+        value.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        value.setForeground(TEXT);
+
+        caption.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+        caption.setForeground(Color.GRAY);
+
+        JPanel text = new JPanel(new GridLayout(3, 1, 0, 2));
+        text.setOpaque(false);
+        text.add(lblTitle);
+        text.add(value);
+        text.add(caption);
+
+        JPanel icon = new JPanel(new GridBagLayout());
+        icon.setOpaque(false);
+        icon.add(new IconCircle(accent, glyph));
+
+        JPanel panel = new JPanel(new BorderLayout(12, 0));
         panel.setBackground(Color.WHITE);
         panel.setBorder(BorderFactory.createCompoundBorder(
                 BorderFactory.createMatteBorder(0, 4, 0, 0, accent),
                 BorderFactory.createCompoundBorder(
-                        BorderFactory.createLineBorder(new Color(220, 224, 230)),
-                        BorderFactory.createEmptyBorder(12, 14, 12, 14))));
-        JLabel lblTitle = new JLabel(title);
-        lblTitle.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-        lblTitle.setForeground(new Color(110, 110, 110));
-        value.setFont(new Font("Segoe UI", Font.BOLD, 24));
-        panel.add(lblTitle, BorderLayout.NORTH);
-        panel.add(value, BorderLayout.CENTER);
+                        BorderFactory.createLineBorder(BORDER),
+                        BorderFactory.createEmptyBorder(12, 12, 12, 12))));
+        panel.add(icon, BorderLayout.WEST);
+        panel.add(text, BorderLayout.CENTER);
         return panel;
+    }
+
+    private void styleTable(JTable table) {
+        table.setRowHeight(30);
+        table.setFont(new Font("Segoe UI", Font.PLAIN, 13));
+        table.setGridColor(BORDER);
+        table.setFillsViewportHeight(true);
+        table.setSelectionBackground(new Color(232, 240, 254));
+        table.setSelectionForeground(TEXT);
+        table.getTableHeader().setReorderingAllowed(false);
+
+        DefaultTableCellRenderer header = new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object value, boolean selected,
+                                                           boolean focus, int row, int column) {
+                super.getTableCellRendererComponent(t, value, false, false, row, column);
+                setOpaque(true);
+                setBackground(HEADER_BACKGROUND);
+                setForeground(TEXT);
+                setFont(new Font("Segoe UI", Font.BOLD, 13));
+                setHorizontalAlignment(column == 0 ? SwingConstants.LEFT : SwingConstants.RIGHT);
+                setBorder(BorderFactory.createCompoundBorder(
+                        BorderFactory.createMatteBorder(0, 0, 1, 1, BORDER),
+                        BorderFactory.createEmptyBorder(6, 8, 6, 8)));
+                return this;
+            }
+        };
+
+        // Net Flow is bold and turns red when the period lost money
+        DefaultTableCellRenderer cell = new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object value, boolean selected,
+                                                           boolean focus, int row, int column) {
+                super.getTableCellRendererComponent(t, value, selected, false, row, column);
+                setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 8));
+                setHorizontalAlignment(column == 0 ? SwingConstants.LEFT : SwingConstants.RIGHT);
+                setFont(new Font("Segoe UI", column == NET_COLUMN ? Font.BOLD : Font.PLAIN, 13));
+                if (column == NET_COLUMN) {
+                    boolean loss = String.valueOf(value).startsWith("-");
+                    setForeground(loss ? RED : GREEN);
+                } else {
+                    setForeground(TEXT);
+                }
+                return this;
+            }
+        };
+
+        int[] widths = {170, 70, 90, 120, 100, 190, 110, 120};
+        for (int i = 0; i < COLUMNS.length; i++) {
+            table.getColumnModel().getColumn(i).setHeaderRenderer(header);
+            table.getColumnModel().getColumn(i).setCellRenderer(cell);
+            table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
+        }
     }
 
     private void applyType() {
@@ -251,15 +347,22 @@ public class ReportsPanel extends JPanel {
 
         LocalDateTime start = from.atStartOfDay();
         LocalDateTime endExclusive = to.plusDays(1).atStartOfDay();
-        LocalDateTime endInclusive = endExclusive.minusNanos(1000);
 
         Map<LocalDate, SalesReportRow> byDay = new HashMap<>();
         for (SalesReportRow row : orderRepository.findDailyReport(start, endExclusive)) {
             byDay.put(LocalDate.parse(row.getPeriod()), row);
         }
-        BigDecimal revenue = orderRepository.calculateRevenueBetween(start, endInclusive);
-        Long items = orderItemRepository.countItemsSoldBetween(start, endInclusive);
+        Map<String, BigDecimal> refunds = toMap(returnsRepository.findDailyRefunds(start, endExclusive));
+        Map<String, BigDecimal> cogs = toMap(orderItemRepository.findDailyCogs(start, endExclusive));
+        Map<String, BigDecimal> spoilage = toMap(
+                componentInventoryRepository.findDailySpoilage(from, to.plusDays(1)));
+
         long orders = 0;
+        long items = 0;
+        BigDecimal revenue = BigDecimal.ZERO;
+        BigDecimal refundTotal = BigDecimal.ZERO;
+        BigDecimal cogsTotal = BigDecimal.ZERO;
+        BigDecimal spoilageTotal = BigDecimal.ZERO;
 
         model.setRowCount(0);
         shownRows.clear();
@@ -267,21 +370,57 @@ public class ReportsPanel extends JPanel {
             SalesReportRow row = byDay.get(day);
             long dayOrders = row == null ? 0 : row.getOrders();
             long dayItems = row == null ? 0 : row.getItemsSold();
-            BigDecimal dayRevenue = row == null ? BigDecimal.ZERO : row.getRevenue();
-            Object[] line = {day.format(ROW_DAY), dayOrders, dayItems, money(dayRevenue)};
+            BigDecimal dayRevenue = row == null ? BigDecimal.ZERO : nz(row.getRevenue());
+            BigDecimal dayRefunds = refunds.getOrDefault(day.toString(), BigDecimal.ZERO);
+            BigDecimal dayCogs = cogs.getOrDefault(day.toString(), BigDecimal.ZERO);
+            BigDecimal daySpoilage = spoilage.getOrDefault(day.toString(), BigDecimal.ZERO);
+            BigDecimal dayNet = dayRevenue.subtract(dayRefunds).subtract(dayCogs).subtract(daySpoilage);
+
+            Object[] line = {day.format(ROW_DAY), dayOrders, dayItems, money(dayRevenue), money(dayRefunds),
+                    money(dayCogs), money(daySpoilage), money(dayNet)};
             model.addRow(line);
             shownRows.add(line);
+
             orders += dayOrders;
+            items += dayItems;
+            revenue = revenue.add(dayRevenue);
+            refundTotal = refundTotal.add(dayRefunds);
+            cogsTotal = cogsTotal.add(dayCogs);
+            spoilageTotal = spoilageTotal.add(daySpoilage);
         }
+        BigDecimal net = revenue.subtract(refundTotal).subtract(cogsTotal).subtract(spoilageTotal);
 
         lblRevenue.setText(money(revenue));
-        lblOrders.setText(String.valueOf(orders));
-        lblItems.setText(String.valueOf(items == null ? 0 : items));
-        shownTotals = new String[]{lblRevenue.getText(), lblOrders.getText(), lblItems.getText()};
+        lblRevenueSub.setText(orders + (orders == 1 ? " Order" : " Orders") + " | " + items + " Items Sold");
+        lblRefunds.setText(money(refundTotal));
+        lblSpoilage.setText(money(spoilageTotal));
+        lblNet.setText(money(net));
+        lblNet.setForeground(net.signum() < 0 ? RED : TEXT);
+        lblNetSub.setText("After " + money(cogsTotal) + " COGS");
+
+        shownRevenue = revenue;
+        shownRefunds = refundTotal;
+        shownCogs = cogsTotal;
+        shownSpoilage = spoilageTotal;
+        shownOrders = orders;
+        shownItems = items;
         shownType = type;
         shownFrom = from;
         shownTo = to;
         lblStatus.setText(type + ": " + rangeText(from, to));
+    }
+
+    // Turns repository rows into a "yyyy-MM-dd" -> amount lookup
+    private Map<String, BigDecimal> toMap(List<SalesPoint> points) {
+        Map<String, BigDecimal> map = new HashMap<>();
+        for (SalesPoint point : points) {
+            map.put(point.getPeriod(), nz(point.getSales()));
+        }
+        return map;
+    }
+
+    private static BigDecimal nz(BigDecimal value) {
+        return value == null ? BigDecimal.ZERO : value;
     }
 
     private String rangeText(LocalDate from, LocalDate to) {
@@ -289,7 +428,16 @@ public class ReportsPanel extends JPanel {
     }
 
     private String money(BigDecimal value) {
-        return "₱" + String.format("%,.2f", value == null ? BigDecimal.ZERO : value);
+        BigDecimal amount = nz(value);
+        return (amount.signum() < 0 ? "-" : "") + "₱" + String.format("%,.2f", amount.abs());
+    }
+
+    // Native queries return the order time as a LocalDateTime or a java.sql.Timestamp depending on the driver
+    private String orderTime(Object value) {
+        LocalDateTime time = value instanceof java.sql.Timestamp
+                ? ((java.sql.Timestamp) value).toLocalDateTime()
+                : (LocalDateTime) value;
+        return time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd hh:mm a"));
     }
 
     private void exportPdf() {
@@ -305,18 +453,30 @@ public class ReportsPanel extends JPanel {
             file = new File(file.getParentFile(), file.getName() + ".pdf");
         }
 
-        List<String[]> summary = new ArrayList<>();
-        summary.add(new String[]{"Report", shownType.toString()});
-        summary.add(new String[]{"Range", rangeText(shownFrom, shownTo)});
-        summary.add(new String[]{"Total revenue", shownTotals[0]});
-        summary.add(new String[]{"Orders", shownTotals[1]});
-        summary.add(new String[]{"Items sold", shownTotals[2]});
+        String preparedBy = currentUser.getFullName() != null && !currentUser.getFullName().isBlank()
+                ? currentUser.getFullName() : currentUser.getUsername();
 
-        List<PdfReport.Section> sections = List.of(
-                new PdfReport.Section(null, COLUMNS, new ArrayList<>(shownRows)));
+        LocalDateTime start = shownFrom.atStartOfDay();
+        LocalDateTime endExclusive = shownTo.plusDays(1).atStartOfDay();
+
+        List<Object[]> payments = new ArrayList<>();
+        for (Object[] row : paymentRepository.sumPaidByMethod(shownFrom, shownTo.plusDays(1))) {
+            payments.add(new Object[]{String.valueOf(row[0]), ((Number) row[1]).longValue(),
+                    new BigDecimal(String.valueOf(row[2]))});
+        }
+
+        List<Object[]> orderLines = new ArrayList<>();
+        for (Object[] row : orderRepository.findCompletedOrdersBetween(start, endExclusive)) {
+            orderLines.add(new Object[]{row[0] == null ? "-" : row[0], orderTime(row[1]), row[2], row[3],
+                    ((Number) row[4]).longValue(), row[5], money(new BigDecimal(String.valueOf(row[6])))});
+        }
+
+        SalesReportPdf.Data data = new SalesReportPdf.Data(shownType.toString(), rangeText(shownFrom, shownTo),
+                preparedBy, shownRevenue, shownRefunds, shownCogs, shownSpoilage, shownOrders, shownItems,
+                COLUMNS, new ArrayList<>(shownRows), payments, orderLines);
 
         try {
-            PdfReport.write(file, shownType + " Report", summary, sections);
+            SalesReportPdf.write(file, data);
             auditService.log(currentUser, "Export Report", "REPORTS",
                     shownType + " " + shownFrom + " to " + shownTo + " -> " + file.getName());
             lblStatus.setText("Saved: " + file.getAbsolutePath());
@@ -325,6 +485,35 @@ public class ReportsPanel extends JPanel {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, "Could not save the report: " + ex.getMessage(),
                     "Reports", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    // Round tinted icon used on the cards, drawn the same way as on the dashboard
+    private static class IconCircle extends JPanel {
+        private final Color color;
+        private final String glyph;
+
+        IconCircle(Color color, String glyph) {
+            this.color = color;
+            this.glyph = glyph;
+            setOpaque(false);
+            setPreferredSize(new Dimension(52, 52));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            Graphics2D g2 = (Graphics2D) g.create();
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), 40));
+            g2.fillOval(0, 0, getWidth() - 1, getHeight() - 1);
+            g2.setColor(color);
+            g2.setFont(new Font("Segoe UI", Font.BOLD, 22));
+            FontMetrics fm = g2.getFontMetrics();
+            g2.drawString(glyph, (getWidth() - fm.stringWidth(glyph)) / 2,
+                    (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
+            g2.dispose();
         }
     }
 }

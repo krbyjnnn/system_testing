@@ -234,7 +234,7 @@ public class UserPanel extends JPanel {
 
         btnToggleStatus.setText(user.getStatus().equals("ACTIVE") ? "Set Inactive" : "Set Active");
         btnToggleStatus.setEnabled(true);
-        btnSetPasskey.setEnabled("MANAGER".equals(user.getRole()));
+        btnSetPasskey.setEnabled("OWNER".equals(user.getRole()) || "MANAGER".equals(user.getRole()));
     }
 
     // Add mode: empty the form

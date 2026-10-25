@@ -110,4 +110,27 @@ public interface ComponentInventoryRepository extends JpaRepository<ComponentInv
             ) s
             """, nativeQuery = true)
     BigDecimal sumSpoilageCostSince(@Param("startDate") LocalDate startDate);
+
+    // Spoilage cost per day, same rules as sumSpoilageCostSince: stock that expired that day and is still
+    // on the shelf, plus spoilage logged that day
+    @Query(value = """
+            SELECT s.period AS period, COALESCE(SUM(s.cost), 0) AS sales FROM (
+                SELECT CAST(pi.expiry_date AS CHAR) AS period, pi.quantity_on_hand * pi.unit_cost AS cost
+                FROM product_inventory pi
+                WHERE pi.expiry_date >= :startDate AND pi.expiry_date < :endDate
+                AND pi.expiry_date < CURDATE() AND pi.quantity_on_hand > 0
+                UNION ALL
+                SELECT CAST(ci.expiry_date AS CHAR), ci.quantity_on_hand * ci.unit_cost
+                FROM component_inventory ci
+                WHERE ci.expiry_date >= :startDate AND ci.expiry_date < :endDate
+                AND ci.expiry_date < CURDATE() AND ci.quantity_on_hand > 0
+                UNION ALL
+                SELECT CAST(DATE(sl.logged_at) AS CHAR), sl.quantity * sl.unit_cost
+                FROM spoilage_log sl
+                WHERE sl.logged_at >= :startDate AND sl.logged_at < :endDate
+            ) s
+            GROUP BY s.period
+            ORDER BY s.period
+            """, nativeQuery = true)
+    List<SalesPoint> findDailySpoilage(@Param("startDate") LocalDate startDate, @Param("endDate") LocalDate endDate);
 }

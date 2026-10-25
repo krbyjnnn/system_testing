@@ -101,4 +101,20 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             ORDER BY period
             """, nativeQuery = true)
     List<SalesReportRow> findMonthlyReport(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+
+    // Completed orders of a period for the printed report:
+    // transaction no., date, cashier, order type, items, payment method(s), total
+    @Query(value = """
+            SELECT o.transaction_number, o.order_date, u.full_name, o.order_type,
+                   CAST(COALESCE((SELECT SUM(oi.quantity) FROM order_items oi WHERE oi.order_id = o.order_id), 0) AS SIGNED),
+                   COALESCE((SELECT GROUP_CONCAT(DISTINCT p.payment_method SEPARATOR ', ') FROM payment p
+                             WHERE p.order_id = o.order_id AND p.payment_status = 'PAID'), '-'),
+                   o.total_amount
+            FROM orders o
+            JOIN users u ON u.user_id = o.user_id
+            WHERE o.order_status = 'COMPLETED'
+            AND o.order_date >= :startDate AND o.order_date < :endDate
+            ORDER BY o.order_date
+            """, nativeQuery = true)
+    List<Object[]> findCompletedOrdersBetween(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 }

@@ -16,7 +16,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 
-// Handles voids at the POS. Staff cannot void on their own: a Manager has to
+// Handles voids at the POS. Staff cannot void on their own: an Owner or Manager has to
 // enter their void passkey, and every void (and every refused attempt) goes to the audit trail.
 @Service
 public class VoidService {
@@ -37,23 +37,23 @@ public class VoidService {
         this.auditService = auditService;
     }
 
-    // Checks the manager's passkey. Returns the approving user, or throws with a message that can be shown.
+    // Checks an authorized approver's passkey. Returns the approver, or throws with a message that can be shown.
     public User authorize(User cashier, String passkey) {
         Permissions.require(cashier, Permissions.Feature.POS);
         checkNotLocked(cashier);
 
         if (passkey == null || passkey.isEmpty()) {
-            throw new IllegalArgumentException("Enter the passkey of a Manager.");
+            throw new IllegalArgumentException("Enter the passkey of an Owner or Manager.");
         }
 
-        for (User manager : userRepository.findAll()) {
-            if (!Permissions.can(manager, Permissions.Feature.APPROVE_VOID)
-                    || !"ACTIVE".equalsIgnoreCase(manager.getStatus())) {
+        for (User approver : userRepository.findAll()) {
+            if (!Permissions.can(approver, Permissions.Feature.APPROVE_VOID)
+                    || !"ACTIVE".equalsIgnoreCase(approver.getStatus())) {
                 continue;
             }
-            if (matches(passkey, manager.getVoidPasskey())) {
+            if (matches(passkey, approver.getVoidPasskey())) {
                 clearFailures(cashier);
-                return manager;
+                return approver;
             }
         }
 
@@ -69,25 +69,25 @@ public class VoidService {
     }
 
     @Transactional
-    public void setPasskey(User owner, User manager, String passkey) {
+    public void setPasskey(User owner, User approver, String passkey) {
         Permissions.require(owner, Permissions.Feature.USERS);
-        if (manager == null || !Permissions.can(manager, Permissions.Feature.APPROVE_VOID)) {
-            throw new IllegalArgumentException("Only a Manager can have a void passkey.");
+        if (approver == null || !Permissions.can(approver, Permissions.Feature.APPROVE_VOID)) {
+            throw new IllegalArgumentException("Only an Owner or Manager can have a void passkey.");
         }
         if (passkey == null || !PASSKEY_FORMAT.matcher(passkey).matches()) {
             throw new IllegalArgumentException("The passkey must be 4 to 8 digits.");
         }
 
         for (User other : userRepository.findAll()) {
-            if (other.getUserId().equals(manager.getUserId())) {
+            if (other.getUserId().equals(approver.getUserId())) {
                 continue;
             }
             if (matches(passkey, other.getVoidPasskey())) {
-                throw new IllegalArgumentException("Another manager already uses that passkey.");
+                throw new IllegalArgumentException("Another Owner or Manager already uses that passkey.");
             }
         }
 
-        User target = userRepository.findById(manager.getUserId())
+        User target = userRepository.findById(approver.getUserId())
                 .orElseThrow(() -> new IllegalArgumentException("User not found."));
         target.setVoidPasskey(hash(passkey));
         userRepository.save(target);
